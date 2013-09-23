@@ -34,6 +34,7 @@ import ObjectParser
 import Control.Exception(finally)
 import Data.List(foldl')
 import Data.List(find)
+import GHC.Float
 
 data SimulatorData = SimulatorData {
 	-- Main loop will exit if running becomes false.
@@ -263,10 +264,10 @@ drawScene simulator =
       theta = radian $ getTheta simulator
       phi = radian $ getPhi simulator
       meshes = getMeshes simulator
-      cameraX = distance * sin theta * cos phi
-      cameraY = distance * sin theta * sin phi
-      cameraZ = distance * cos theta
-      camera = vector cameraX cameraY cameraZ
+      cameraX = float2Double $ distance * sin theta * cos phi
+      cameraY = float2Double $ distance * sin theta * sin phi
+      cameraZ = float2Double $ distance * cos theta
+      camera = vector (double2Float cameraX) (double2Float cameraY) (double2Float cameraZ)
 
       globalAxes = getGlobalAxes simulator
       lighting = getLighting simulator
@@ -279,9 +280,9 @@ drawScene simulator =
       up = cross camera azimuthGrad in
     do
       -- Set up camera direction
-      GL.matrixMode $= GL.Modelview 
+      GL.matrixMode $= GL.Modelview 0
       GL.loadIdentity
-      GLU.lookAt cameraX cameraY cameraZ 0 0 0.5 (x up) (y up) (z up)
+      GLU.lookAt (GL.Vertex3 (realToFrac cameraX) (realToFrac cameraY) (realToFrac cameraZ :: GL.GLdouble)) (GL.Vertex3 0 0 0.5) (GL.Vector3 (realToFrac $ x up) (realToFrac $ y up) (realToFrac $ z up))
 
       -- Disable lighting when using wireframing
       flip finally (GL.lighting $= GL.Enabled) $ do 
