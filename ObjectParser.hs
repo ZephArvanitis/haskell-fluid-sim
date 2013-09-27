@@ -24,6 +24,7 @@ import Data.Array(listArray)
 data Mesh = Mesh {
     vertices :: Array Int Vertex,
     faces :: Array Int Face,
+    normals :: Array Int Vertex,
     name :: MeshName,
     dx, dy, dz :: Float,
     sx, sy, sz :: Float,

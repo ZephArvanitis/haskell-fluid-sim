@@ -19,14 +19,13 @@ module Simulator (
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.UI.GLFW as GLFW
-import Data.Array((!))
+import Data.Array((!), elems)
 import qualified Graphics.Rendering.OpenGL.GLU as GLU
 import Graphics.UI.GLUT.Objects (renderObject, Flavour(Solid), Object(Cone))
 import Graphics.UI.GLUT.Fonts as Fonts
 import Control.Concurrent.Chan
 import Control.Concurrent.Timer
 import Control.Concurrent.Suspend.Lifted(msDelay)
-import Control.Concurrent.MVar(newEmptyMVar, takeMVar)
 import Data.Int(Int64)
 import Control.Monad
 
@@ -96,6 +95,7 @@ data SimulatorData = SimulatorData {
   }
 
 type Vector = ObjectParser.Vertex
+vector ::  Float -> Float -> Float -> Vertex
 vector = Vertex
 
 -- Global variables
@@ -128,8 +128,8 @@ minDistance  = 1.0
 maxDistance :: Float
 maxDistance  = 10
 
-roomSize :: Float
-roomSize = maxDistance * 1.1
+roomSize :: GL.GLfloat
+roomSize = realToFrac $ maxDistance * 1.1
 
 
 initSimulatorState :: IO SimulatorData
@@ -289,12 +289,12 @@ drawScene simulator =
         when (lighting && wireframing) $ GL.lighting $= GL.Disabled
 
         -- Draw simulation boundaries to avoid ugly black background
-        drawGround
+        drawGround simulator
 
         -- Draw all meshes
         forM_ meshes $ drawMesh simulator
 
-        when globalAxes drawCoordinateAxes
+        when globalAxes $ drawCoordinateAxes simulator
 
 drawOverlays :: SimulatorData -> IO ()
 drawOverlays simulator = 
@@ -308,13 +308,13 @@ drawOverlays simulator =
       lighting = getLighting simulator
       textOffset = overlayBorder + borderPadding in when (helpOverlay simulator) $ do
     flip finally (GL.lighting $= GL.Enabled >> GL.blend $= GL.Disabled) $ do 
-      when (lighting simulator) $ GL.lighting $= GL.Disabled
+      when (getLighting simulator) $ GL.lighting $= GL.Disabled
 
       -- Allow blending for semi-transparent overview
       GL.blend $= GL.Enabled
 
       -- Draw transparent quad covering most of scene
-      GL.color $ GL.Color4 0.1 0.1 0.1 0.9
+      GL.color (GL.Color4 0.1 0.1 0.1 0.9 :: GL.Color4 GL.GLfloat)
       GL.renderPrimitive GL.Quads $ do
         GL.vertex $ GL.Vertex2 overlayBorder overlayBorder
         GL.vertex $ GL.Vertex2 (width-overlayBorder) overlayBorder
@@ -322,11 +322,13 @@ drawOverlays simulator =
         GL.vertex $ GL.Vertex2 overlayBorder (height-overlayBorder)
 
       -- Text color
-      GL.color $ GL.Color3 0.9 0.9 0.9
+      GL.color (GL.Color3 0.9 0.9 0.9 :: GL.Color3 GL.GLfloat)
 
       -- Help text heading
       headingWidth <- Fonts.stringWidth bold heading
-      Fonts.renderString bold (width-headingWidth/2) (overlayBorder+10) heading
+      GL.preservingMatrix $ do
+        GL.rasterPos $ GL.Vertex2 (width-headingWidth `div` 2) (overlayBorder+10)
+        Fonts.renderString bold heading
 
       -- Overlay help text
       let helpStrsWithIndices = zip [1..] $ keyboardHelpStrings simulator 
@@ -334,10 +336,10 @@ drawOverlays simulator =
         let yLoc = textOffset + lineSpacing * i
             xLoc = textOffset
         GL.preservingMatrix $ do
-          GL.translate $ GL.Vector2 xLoc yLoc
+          GL.rasterPos $ GL.Vertex2 xLoc yLoc
           Fonts.renderString font key
 
-          GL.translate $ GL.Vector2 (tabLocation - xLoc) 0
+          GL.rasterPos $ GL.Vertex2 (tabLocation - xLoc) 0
           Fonts.renderString font helpText
 
 drawGround :: SimulatorData -> IO ()
@@ -348,137 +350,155 @@ drawGround simulator =
     GL.materialDiffuse GL.FrontAndBack   $= GL.Color4 1.0 1.0 0.8 0.5
     GL.materialShininess GL.FrontAndBack $= 100.0
 
+
     -- Draw ground quad
-    GL.textureBinding $ GL.Texture2D $= Just groundTex
+    GL.textureBinding  GL.Texture2D $= Just groundTex
     GL.renderPrimitive GL.Quads $ do
-      GL.normal $ GL.Normal3 0 0 1
-      GL.texCoord $ GL.TexCoord2 0 0
+      n $ GL.Normal3 0 0 1
+      tex $ GL.TexCoord2 0 0
       GL.vertex $ GL.Vertex3 (-roomSize) (-roomSize) 0
-      GL.texCoord $ GL.TexCoord2 0 1
+      tex $ GL.TexCoord2 0 1
       GL.vertex $ GL.Vertex3 (-roomSize) roomSize 0
-      GL.texCoord $ GL.TexCoord2 1 1
+      tex $ GL.TexCoord2 1 1
       GL.vertex $ GL.Vertex3 roomSize roomSize 0
-      GL.texCoord $ GL.TexCoord2 1 0
+      tex $ GL.TexCoord2 1 0
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) 0
 
     -- Draw walls
-    GL.textureBinding $ GL.Texture2D $= Just wallTex
+    GL.textureBinding GL.Texture2D $= Just wallTex
     GL.renderPrimitive GL.Quads $ do
-      GL.normal $ GL.Normal3 1 0 0
-      GL.texCoord $ GL.TexCoord2 0 0
+      n $ GL.Normal3 1 0 0
+      tex $ GL.TexCoord2 0 0
       GL.vertex $ GL.Vertex3 (-roomSize) (-roomSize) 0
-      GL.texCoord $ GL.TexCoord2 0 1
+      tex $ GL.TexCoord2 0 1
       GL.vertex $ GL.Vertex3 (-roomSize) roomSize 0
-      GL.texCoord $ GL.TexCoord2 1 1
+      tex $ GL.TexCoord2 1 1
       GL.vertex $ GL.Vertex3 (-roomSize) roomSize roomSize
-      GL.texCoord $ GL.TexCoord2 1 0
+      tex $ GL.TexCoord2 1 0
       GL.vertex $ GL.Vertex3 (-roomSize) (-roomSize) roomSize
 
-      GL.normal $ GL.Normal3 (-1) 0 0
-      GL.texCoord $ GL.TexCoord2 0 0
+      n $ GL.Normal3 (-1) 0 0
+      tex $ GL.TexCoord2 0 0
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) 0
-      GL.texCoord $ GL.TexCoord2 0 1
+      tex $ GL.TexCoord2 0 1
       GL.vertex $ GL.Vertex3 roomSize roomSize 0
-      GL.texCoord $ GL.TexCoord2 1 1
+      tex $ GL.TexCoord2 1 1
       GL.vertex $ GL.Vertex3 roomSize roomSize roomSize
-      GL.texCoord $ GL.TexCoord2 1 0
+      tex $ GL.TexCoord2 1 0
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) roomSize
 
-      GL.normal $ GL.Normal3 0 1 0
-      GL.texCoord $ GL.TexCoord2 0 0
+      n $ GL.Normal3 0 1 0
+      tex $ GL.TexCoord2 0 0
       GL.vertex $ GL.Vertex3 (-roomSize) (-roomSize) 0
-      GL.texCoord $ GL.TexCoord2 0 1
+      tex $ GL.TexCoord2 0 1
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) 0
-      GL.texCoord $ GL.TexCoord2 1 1
+      tex $ GL.TexCoord2 1 1
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) roomSize
-      GL.texCoord $ GL.TexCoord2 1 0
+      tex $ GL.TexCoord2 1 0
       GL.vertex $ GL.Vertex3 (-roomSize) (-roomSize) roomSize
 
-      GL.normal $ GL.Normal3 0 (-1) 0
-      GL.texCoord $ GL.TexCoord2 0 0
+      n $ GL.Normal3 0 (-1) 0
+      tex $ GL.TexCoord2 0 0
       GL.vertex $ GL.Vertex3 (-roomSize) roomSize 0
-      GL.texCoord $ GL.TexCoord2 0 1
+      tex $ GL.TexCoord2 0 1
       GL.vertex $ GL.Vertex3 roomSize roomSize 0
-      GL.texCoord $ GL.TexCoord2 1 1
+      tex $ GL.TexCoord2 1 1
       GL.vertex $ GL.Vertex3 roomSize roomSize roomSize
-      GL.texCoord $ GL.TexCoord2 1 0
+      tex $ GL.TexCoord2 1 0
       GL.vertex $ GL.Vertex3 (-roomSize) roomSize roomSize
 
     -- Remove texturing
-    GL.textureBinding $ GL.Texture2D $= Nothing
+    GL.textureBinding GL.Texture2D $= Nothing
+
+v :: GL.Vertex3 GL.GLfloat -> IO ()
+v = GL.vertex
+c :: GL.Color3 GL.GLfloat -> IO ()
+c = GL.color
+rot :: GL.GLfloat -> GL.Vector3 GL.GLfloat -> IO ()
+rot = GL.rotate
+trans :: GL.Vector3 GL.GLfloat -> IO ()
+trans = GL.translate
+sc :: GL.GLfloat -> GL.GLfloat -> GL.GLfloat -> IO ()
+sc = GL.scale
+n :: GL.Normal3 GL.GLfloat -> IO ()
+n = GL.normal
+tex :: GL.TexCoord2 GL.GLfloat -> IO ()
+tex = GL.texCoord
 
 drawCoordinateAxes :: SimulatorData -> IO ()
 drawCoordinateAxes simulator = do
   let lighting = getLighting simulator
   -- Draw coordinate axes and arrows in colors, without lighting.
   flip finally (GL.lighting $= GL.Enabled) $ do 
-    when (lighting simulator) $ GL.lighting $= GL.Disabled
+    when (getLighting simulator) $ GL.lighting $= GL.Disabled
+
 
     -- Red x-axis line.
-    GL.color $ GL.Color3 1.0 0.0 0.0
+    c $ GL.Color3 1.0 0.0 0.0
     GL.renderPrimitive GL.Lines $ do
-      GL.vertex $ GL.Vertex3 0.0 0.0 0.0
-      GL.vertex $ GL.Vertex3 1.0 0.0 0.0
+      v $ GL.Vertex3 0.0 0.0 0.0
+      v $ GL.Vertex3 1.0 0.0 0.0
 
     -- red arrow.
     GL.preservingMatrix $ do  
-      GL.translate $ GL.Vector3 1.0 0.0 0.0
-      GL.rotate 90 $ GL.Vector3 0.0 1.0 0.0
+      trans $ GL.Vector3 1.0 0.0 0.0
+      rot 90 $ GL.Vector3 0.0 1.0 0.0
       renderObject Solid $ Cone 0.04 0.2 10 10
 
     -- green y-axis line.
-    GL.color $ GL.Color3 0.0 1.0 0.0
+    c $ GL.Color3 0.0 1.0 0.0
     GL.renderPrimitive GL.Lines $ do
-      GL.vertex $ GL.Vertex3 0.0 0.0 0.0
-      GL.vertex $ GL.Vertex3 0.0 1.0 0.0
+      v $ GL.Vertex3 0.0 0.0 0.0
+      v $ GL.Vertex3 0.0 1.0 0.0
 
     -- green arrow.
     GL.preservingMatrix $ do
-      GL.translate $ GL.Vector3 0.0 1.0 0.0
-      GL.rotate -90 $ GL.Vector3 1.0 0.0 0.0
+      trans $ GL.Vector3 0.0 1.0 0.0
+      rot (-90) $ GL.Vector3 1.0 0.0 0.0
       renderObject Solid $ Cone 0.04 0.2 10 10
 
     -- blue z-axis line.
-    GL.color $ GL.Color3 0.0 0.0 1.0
+    c $ GL.Color3 0.0 0.0 1.0
     GL.renderPrimitive GL.Lines $ do
-      GL.vertex $ GL.Vertex3 0.0 0.0 0.0
-      GL.vertex $ GL.Vertex3 0.0 0.0 1.0
+      v $ GL.Vertex3 0.0 0.0 0.0
+      v $ GL.Vertex3 0.0 0.0 1.0
 
     -- Blue arrow.
     GL.preservingMatrix $ do
-      GL.translate 0.0 0.0 1.0
-      GL.rotate -90 $ GL.Vector3 0.0 0.0 1.0
+      trans $ GL.Vector3 0.0 0.0 1.0
+      rot (-90) $ GL.Vector3 0.0 0.0 1.0
       renderObject Solid $ Cone 0.04 0.2 10 10
 
 drawMesh :: SimulatorData -> Mesh -> IO ()
 drawMesh simulator mesh = do
-  let vertices = vertices mesh
-      faces = faces mesh
-      normals = normals mesh
-      wireframe = wireframe simulator
+  let verts = vertices mesh
+      fs = faces mesh
+      norms = normals mesh
+      wireframe = getWireframe simulator
 
 	-- Apply local transformations
   GL.preservingMatrix $ do
-    GL.translate $ GL.Vector3 (dx mesh) (dy mesh) (dz mesh) 
-    GL.rotate (rz mesh) $ GL.Vector3 0 0 1 
-    GL.rotate (ry mesh) $ GL.Vector3 0 1 0 
-    GL.rotate (rx mesh) $ GL.Vector3 1 0 0 
-    GL.scale (sx mesh) (sy mesh) (sz mesh) 
+    trans $ GL.Vector3 (realToFrac $ dx mesh) (realToFrac $ dy mesh) (realToFrac $ dz mesh) 
+    rot (realToFrac $ rz mesh) $ GL.Vector3 0 0 1 
+    rot (realToFrac $ ry mesh) $ GL.Vector3 0 1 0 
+    rot (realToFrac $ rx mesh) $ GL.Vector3 1 0 0 
+    sc (realToFrac $ sx mesh) (realToFrac $ sy mesh) (realToFrac $ sz mesh) 
 
     -- Draw each face separately.
-    forM_ faces $ \face -> do
-      when wireframe $ GL.Color3 1.0 1.0 1.0
+    forM_ (elems fs) $ \face -> do
+      when wireframe $ c $ GL.Color3 1.0 1.0 1.0
       let mode = if wireframe then GL.LineLoop else
-            case length faces of
-              4 -> GL.Quads
-              3 -> GL.Triangles
-              _ -> error "Unknown polygon type!"
+            case face of
+              Triangle _ _ _ -> GL.Triangles
+              Quad _ _ _ _ -> GL.Quads
 
-      let faceData vals = map (vals !) face
+      let getVertIndices (Triangle a b c) = [a, b, c]
+          getVertIndices (Quad a b c d) = [a, b, c, d]
+          faceData vals = map (vals !) $ getVertIndices face
       GL.renderPrimitive mode $
-        forM (zip (faceData vertices) (faceData normals)) $ \(vertex, normal) -> do
-          GL.normal $ GL.Normal3 (x normal) (y normal) (z normal)
-          GL.vertex $ GL.Vertex3 (x vertex) (y vertex) (z vertex)
+        forM (zip (faceData verts) (faceData norms)) $ \(vertex, normal) -> do
+          n $ GL.Normal3 (realToFrac $x normal) (realToFrac $y normal) (realToFrac $z normal)
+          v $ GL.Vertex3 (realToFrac $x vertex) (realToFrac $y vertex) (realToFrac $z vertex)
 
 
 terminate :: IO ()
