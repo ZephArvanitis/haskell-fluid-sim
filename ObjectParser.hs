@@ -6,25 +6,19 @@ module ObjectParser (
   parseMesh
 ) where 
 
-import Data.Array(Array)
-import Text.Parsec.String(Parser)
-import Text.Parsec.Combinator(count)
-import Text.Parsec.Prim(many)
-import Text.Parsec.Char(noneOf)
-import Text.Parsec.Char(oneOf)
-import Text.Parsec.Char(newline)
 import Control.Monad(liftM)
-import Text.Parsec.Combinator(many1)
+import Data.Array(listArray, Array)
 import Data.Maybe(catMaybes)
-import Text.Parsec.Char(char)
-import Text.Parsec.Prim(parse)
-import Text.Parsec.Combinator(optionMaybe)
-import Data.Array(listArray)
+import Text.Parsec.Char(noneOf, oneOf, newline, char)
+import Text.Parsec.Combinator(count, many1, optionMaybe)
+import Text.Parsec.Prim(parse, many)
+import Text.Parsec.String(Parser)
 
 data Mesh = Mesh {
     vertices :: Array Int Vertex,
     faces :: Array Int Face,
-    normals :: Array Int Vertex,
+    faceNormals :: Array Int Vertex,
+    vertexNormals :: Array Int Vertex,
     name :: MeshName,
     dx, dy, dz :: Float,
     sx, sy, sz :: Float,
@@ -88,11 +82,37 @@ parseMesh filePath = do
   let name = case parse nameParser filePath fileContents of
         Left e -> error $ show e
         Right [nameStr] -> nameStr
+
+  let (vertNormals, faceNormals) = computeNormals faces vertices
+
   return Mesh {
     dx = 0, dy = 0, dz = 0,
     rx = 0, ry = 0, rz = 0,
     sx = 1, sy = 1, sz = 1,
     vertices = listArray (1, length vertices) vertices,
     faces = listArray (1, length faces) faces,
+    vertexNormals = listArray (1, length vertNormals) vertNormals,
+    faceNormals = listArray (1, length faceNormals) faceNormals,
     name = name
   }
+
+computeNormals :: [Face] -> [Vertex] -> ([Vertex], [Vertex])
+computeNormals faces vertices = (vertexNormals, faceNormals)
+  where
+    faceNormals = map (makeFaceNormal vertices) faces
+    vertexNormals = map (makeVertexNormal faceNormals) $ zip [1..] vertices 
+
+    makeFaceNormal vertices (Triangle a b c) = faceNormalFor (vertices !! a) (vertices !! b) (vertices !! c)
+    makeFaceNormal vertices (Quad a b c _) = faceNormalFor (vertices !! a) (vertices !! b) (vertices !! c)
+    faceNormalFor v1 v2 v3 =
+      let x1 = x v1 - x v2
+          y1 = y v1 - y v2
+          z1 = z v1 - z v2
+
+          x2 = x v1 - x v3
+          y2 = y v1 - y v3
+          z2 = z v1 - z v3 in
+
+				// Compute Normal = CrossProduct(edge 1, edge 2)
+				faceNormals[faceInd] = first.CrossProduct(second).Normalized()
+

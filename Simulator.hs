@@ -473,7 +473,7 @@ drawMesh :: SimulatorData -> Mesh -> IO ()
 drawMesh simulator mesh = do
   let verts = vertices mesh
       fs = faces mesh
-      norms = normals mesh
+      norms = vertexNormals mesh
       wireframe = getWireframe simulator
 
 	-- Apply local transformations
