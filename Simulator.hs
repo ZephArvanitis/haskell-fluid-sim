@@ -31,8 +31,7 @@ import Control.Monad
 
 import ObjectParser
 import Control.Exception(finally)
-import Data.List(foldl')
-import Data.List(find)
+import Data.List(foldl', find)
 import GHC.Float
 
 data SimulatorData = SimulatorData {
@@ -233,17 +232,17 @@ draw state = do
   GL.loadIdentity
   let aspectRatio = fromIntegral width / fromIntegral height
   GLU.perspective 45.0 aspectRatio 0.1 100.0
-  GL.matrixMode $= (GL.Modelview 0)
-  GL.loadIdentity
 
+  GL.matrixMode $= GL.Modelview 0
+  GL.loadIdentity
   drawScene state
 
   GL.matrixMode $= GL.Projection
   GL.loadIdentity
   GL.ortho 0.0  (fromIntegral width)  0 (fromIntegral height)  0.0 30.0
+
   GL.matrixMode $= GL.Modelview 0
   GL.loadIdentity
-
   drawOverlays state
 
   GL.flush
@@ -280,8 +279,6 @@ drawScene simulator =
       up = cross camera azimuthGrad in
     do
       -- Set up camera direction
-      GL.matrixMode $= GL.Modelview 0
-      GL.loadIdentity
       GLU.lookAt (GL.Vertex3 (realToFrac cameraX) (realToFrac cameraY) (realToFrac cameraZ :: GL.GLdouble)) (GL.Vertex3 0 0 0.5) (GL.Vector3 (realToFrac $ x up) (realToFrac $ y up) (realToFrac $ z up))
 
       -- Disable lighting when using wireframing
@@ -352,7 +349,7 @@ drawGround simulator =
 
 
     -- Draw ground quad
-    GL.textureBinding  GL.Texture2D $= Just groundTex
+  --  GL.textureBinding  GL.Texture2D $= Just groundTex
     GL.renderPrimitive GL.Quads $ do
       n $ GL.Normal3 0 0 1
       tex $ GL.TexCoord2 0 0
@@ -365,7 +362,7 @@ drawGround simulator =
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) 0
 
     -- Draw walls
-    GL.textureBinding GL.Texture2D $= Just wallTex
+ --   GL.textureBinding GL.Texture2D $= Just wallTex
     GL.renderPrimitive GL.Quads $ do
       n $ GL.Normal3 1 0 0
       tex $ GL.TexCoord2 0 0
@@ -408,7 +405,7 @@ drawGround simulator =
       GL.vertex $ GL.Vertex3 (-roomSize) roomSize roomSize
 
     -- Remove texturing
-    GL.textureBinding GL.Texture2D $= Nothing
+   -- GL.textureBinding GL.Texture2D $= Nothing
 
 v :: GL.Vertex3 GL.GLfloat -> IO ()
 v = GL.vertex
@@ -530,13 +527,13 @@ registerPressed simulator char updater =
 
 -- Things that don't require IO
 isRunning :: SimulatorData -> Bool
-isRunning simulator = running simulator
+isRunning = running
 
 isPaused :: SimulatorData -> Bool
-isPaused simulator = paused simulator
+isPaused = paused
 
 shouldRestart :: SimulatorData -> Bool
-shouldRestart simulator = shouldRestartSimulation simulator
+shouldRestart = shouldRestartSimulation
 
 setHasRestarted :: SimulatorData -> SimulatorData
 setHasRestarted simulator = simulator {

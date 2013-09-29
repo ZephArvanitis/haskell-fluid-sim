@@ -100,7 +100,7 @@ computeNormals :: [Face] -> [Vertex] -> ([Vertex], [Vertex])
 computeNormals faces vertices = (vertexNormals, faceNormals)
   where
     faceNormals = map (makeFaceNormal vertices) faces
-    vertexNormals = map (makeVertexNormal faceNormals) $ zip [1..] vertices 
+    vertexNormals = map (makeVertexNormal faceNormals) [1..length vertices]
 
     makeFaceNormal vertices (Triangle a b c) = faceNormalFor (vertices !! a) (vertices !! b) (vertices !! c)
     makeFaceNormal vertices (Quad a b c _) = faceNormalFor (vertices !! a) (vertices !! b) (vertices !! c)
@@ -112,7 +112,22 @@ computeNormals faces vertices = (vertexNormals, faceNormals)
           x2 = x v1 - x v3
           y2 = y v1 - y v3
           z2 = z v1 - z v3 in
+        cross (Vertex x1 y1 z1) (Vertex x2 y2 z2)
 
-				// Compute Normal = CrossProduct(edge 1, edge 2)
-				faceNormals[faceInd] = first.CrossProduct(second).Normalized()
+    makeVertexNormal faceNormals index = 
+      let faceHasInd (Quad a b c d) =  (`elem` [a, b, c, d])
+          faceHasInd (Triangle a b c) =  (`elem` [a, b, c])
+          faceMask = map (`faceHasInd` index) faces
+          allNormals = map snd $ filter fst $ zip faceMask faceNormals
+          n = realToFrac $ length allNormals
+          addVec (Vertex x1 y1 z1) (Vertex x2 y2 z2) = Vertex (x1 + x2) (y1 + y2) (z1 + z2)
+          Vertex {x = tx, y = ty, z = tz} = foldr1 addVec allNormals in
+        Vertex {x = tx / n, y = ty / n, z = tz / n}
+
+cross :: Vertex -> Vertex -> Vertex
+cross (Vertex x1 y1 z1) (Vertex x2 y2 z2) = Vertex {
+  x = y1*z2 - z1*y2,
+  y = z1*x2 - x1*z2,
+  z = x1*y2 - y1*x2
+}
 
