@@ -189,11 +189,12 @@ initialize = do
   True <- GLFW.initialize
   True <- GLFW.openWindow (GL.Size width height) [
     GLFW.DisplayRGBBits 8 8 8,
-    GLFW.DisplayDepthBits 1,
+    GLFW.DisplayDepthBits 16,
     GLFW.DisplayAlphaBits 8
     ] GLFW.Window
   GLFW.windowTitle $= "Fluid Simulation Thingamadoop" 
   GL.depthFunc $= Just GL.Less
+  GL.lighting $= GL.Enabled
   state <- initSimulatorState
   repeatedTimer (writeChan (ticker state) ()) $ msDelay millisPerFrame
   GLFW.keyCallback $= (curry $ writeChan $ keyChannel state)
