@@ -197,7 +197,52 @@ initialize = do
   state <- initSimulatorState
   repeatedTimer (writeChan (ticker state) ()) $ msDelay millisPerFrame
   GLFW.keyCallback $= (curry $ writeChan $ keyChannel state)
+  initGL
   return state
+
+initGL :: IO () 
+initGL = do
+  -- Initialize the viewport and perspective.
+  GL.viewport $= (GL.Position 0 0, GL.Size width height)
+
+--gl.ShadeModel(gl.SMOOTH)
+--gl.ClearColor(0, 0, 0, 0)
+--gl.ClearDepth(1)
+--gl.Enable(gl.DEPTH_TEST)
+--gl.DepthFunc(gl.LEQUAL)
+--gl.Hint(gl.PERSPECTIVE_CORRECTION_HINT, gl.NICEST)
+
+--mat_specular := []float32{1.0, 1.0, 1.0, 1.0}
+--mat_diffuse := []float32{0.5, 1.0, 0.5, 0.5}
+--mat_shininess := []float32{50.0}
+--light0_position := []float32{1.0, 1.0, 1.0, 0.0}
+--light1_position := []float32{-1.0, -1.0, 1.0, 0.0}
+--light2_position := []float32{1.0, 1.0, -1.0, 0.0}
+
+--light1_diffuse := []float32{1.0, 1.0, 1.0, 1.0}
+--light1_specular := []float32{0.1, 0.1, 0.1, 1.0}
+
+--gl.Materialfv(gl.FRONT_AND_BACK, gl.SPECULAR, mat_specular)
+--gl.Materialfv(gl.FRONT_AND_BACK, gl.SHININESS, mat_shininess)
+--gl.Materialfv(gl.FRONT_AND_BACK, gl.DIFFUSE, mat_diffuse)
+--gl.Lightfv(gl.LIGHT0, gl.POSITION, light0_position)
+--gl.Lightfv(gl.LIGHT0, gl.SPECULAR, light1_specular)
+
+--gl.Lightfv(gl.LIGHT1, gl.POSITION, light1_position)
+--gl.Lightfv(gl.LIGHT1, gl.DIFFUSE, light1_diffuse)
+--gl.Lightfv(gl.LIGHT1, gl.SPECULAR, light1_specular)
+
+--gl.Lightfv(gl.LIGHT2, gl.POSITION, light2_position)
+--gl.Lightfv(gl.LIGHT2, gl.DIFFUSE, light1_diffuse)
+--gl.Lightfv(gl.LIGHT2, gl.SPECULAR, light1_specular)
+
+--gl.Enable(gl.LIGHTING)
+--gl.Enable(gl.LIGHT0)
+--gl.Enable(gl.LIGHT1)
+--gl.Enable(gl.LIGHT2)
+
+--gl.Enable(gl.TEXTURE_2D)
+---}
 
 waitForNextFrame :: SimulatorData -> IO ()
 waitForNextFrame = readChan . ticker
