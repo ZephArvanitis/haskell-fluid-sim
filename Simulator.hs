@@ -389,7 +389,6 @@ drawGround simulator =
     GL.materialDiffuse GL.FrontAndBack   $= GL.Color4 1.0 1.0 0.8 0.5
     GL.materialShininess GL.FrontAndBack $= 100.0
 
-
     -- Draw ground quad
     GL.textureBinding  GL.Texture2D $= Just groundTex
     GL.renderPrimitive GL.Quads $ do
