@@ -205,44 +205,41 @@ initGL = do
   -- Initialize the viewport and perspective.
   GL.viewport $= (GL.Position 0 0, GL.Size width height)
 
---gl.ShadeModel(gl.SMOOTH)
---gl.ClearColor(0, 0, 0, 0)
---gl.ClearDepth(1)
---gl.Enable(gl.DEPTH_TEST)
---gl.DepthFunc(gl.LEQUAL)
---gl.Hint(gl.PERSPECTIVE_CORRECTION_HINT, gl.NICEST)
+  GL.shadeModel $= GL.Smooth
+  GL.clearColor $= GL.Color4 0 0 0 0
+  GL.clearDepth $= 1
+  GL.depthFunc $= Just GL.Lequal
+  GL.hint GL.PerspectiveCorrection $= GL.Nicest
 
---mat_specular := []float32{1.0, 1.0, 1.0, 1.0}
---mat_diffuse := []float32{0.5, 1.0, 0.5, 0.5}
---mat_shininess := []float32{50.0}
---light0_position := []float32{1.0, 1.0, 1.0, 0.0}
---light1_position := []float32{-1.0, -1.0, 1.0, 0.0}
---light2_position := []float32{1.0, 1.0, -1.0, 0.0}
+  let specular = GL.Color4 1.0 1.0 1.0 1.0
+      diffuse = GL.Color4 0.5 1.0 0.5 0.5
+      shininess = 50.0
+      light0Position = GL.Vertex4 1.0 1.0 1.0 0.0
+      light1Position = GL.Vertex4 (-1.0) (-1.0) 1.0 0.0
+      light2Position = GL.Vertex4 1.0 1.0 (-1.0) 0.0
+      lightDiffuse = GL.Color4  1.0 1.0 1.0 1.0
+      lightSpecular = GL.Color4  0.1 0.1 0.1 1.0
 
---light1_diffuse := []float32{1.0, 1.0, 1.0, 1.0}
---light1_specular := []float32{0.1, 0.1, 0.1, 1.0}
+  GL.materialSpecular GL.FrontAndBack $= specular
+  GL.materialDiffuse GL.FrontAndBack $= diffuse
+  GL.materialShininess GL.FrontAndBack $= shininess
 
---gl.Materialfv(gl.FRONT_AND_BACK, gl.SPECULAR, mat_specular)
---gl.Materialfv(gl.FRONT_AND_BACK, gl.SHININESS, mat_shininess)
---gl.Materialfv(gl.FRONT_AND_BACK, gl.DIFFUSE, mat_diffuse)
---gl.Lightfv(gl.LIGHT0, gl.POSITION, light0_position)
---gl.Lightfv(gl.LIGHT0, gl.SPECULAR, light1_specular)
+  GL.position (GL.Light 0) $= light0Position
+  GL.position (GL.Light 1) $= light1Position
+  GL.position (GL.Light 2) $= light2Position
 
---gl.Lightfv(gl.LIGHT1, gl.POSITION, light1_position)
---gl.Lightfv(gl.LIGHT1, gl.DIFFUSE, light1_diffuse)
---gl.Lightfv(gl.LIGHT1, gl.SPECULAR, light1_specular)
+  GL.specular (GL.Light 0) $= lightSpecular
+  GL.specular (GL.Light 1) $= lightSpecular
+  GL.specular (GL.Light 2) $= lightSpecular
 
---gl.Lightfv(gl.LIGHT2, gl.POSITION, light2_position)
---gl.Lightfv(gl.LIGHT2, gl.DIFFUSE, light1_diffuse)
---gl.Lightfv(gl.LIGHT2, gl.SPECULAR, light1_specular)
+  GL.diffuse (GL.Light 1) $= lightDiffuse
+  GL.diffuse (GL.Light 2) $= lightDiffuse
 
---gl.Enable(gl.LIGHTING)
---gl.Enable(gl.LIGHT0)
---gl.Enable(gl.LIGHT1)
---gl.Enable(gl.LIGHT2)
-
---gl.Enable(gl.TEXTURE_2D)
----}
+  GL.lighting $= GL.Enabled
+  GL.light (GL.Light 0) $= GL.Enabled
+  GL.light (GL.Light 1) $= GL.Enabled
+  GL.light (GL.Light 2) $= GL.Enabled
+  GL.texture GL.Texture2D $= GL.Enabled
 
 waitForNextFrame :: SimulatorData -> IO ()
 waitForNextFrame = readChan . ticker
@@ -394,7 +391,7 @@ drawGround simulator =
 
 
     -- Draw ground quad
-  --  GL.textureBinding  GL.Texture2D $= Just groundTex
+    GL.textureBinding  GL.Texture2D $= Just groundTex
     GL.renderPrimitive GL.Quads $ do
       n $ GL.Normal3 0 0 1
       tex $ GL.TexCoord2 0 0
@@ -407,7 +404,7 @@ drawGround simulator =
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) 0
 
     -- Draw walls
- --   GL.textureBinding GL.Texture2D $= Just wallTex
+    GL.textureBinding GL.Texture2D $= Just wallTex
     GL.renderPrimitive GL.Quads $ do
       n $ GL.Normal3 1 0 0
       tex $ GL.TexCoord2 0 0
