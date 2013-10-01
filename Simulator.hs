@@ -23,6 +23,7 @@ import Data.Array((!), elems)
 import qualified Graphics.Rendering.OpenGL.GLU as GLU
 import Graphics.UI.GLUT.Objects (renderObject, Flavour(Solid), Object(Cone))
 import Graphics.UI.GLUT.Fonts as Fonts
+import qualified Graphics.UI.GLUT.Initialization as GLUTInit
 import Control.Concurrent.Chan
 import Control.Concurrent.Timer
 import Control.Concurrent.Suspend.Lifted(msDelay)
@@ -187,6 +188,7 @@ height = 480
 initialize :: IO SimulatorData
 initialize = do
   True <- GLFW.initialize
+  GLUTInit.initialize "Simulator" []
   True <- GLFW.openWindow (GL.Size width height) [
     GLFW.DisplayRGBBits 8 8 8,
     GLFW.DisplayDepthBits 16,
@@ -198,7 +200,59 @@ initialize = do
   state <- initSimulatorState
   repeatedTimer (writeChan (ticker state) ()) $ msDelay millisPerFrame
   GLFW.keyCallback $= (curry $ writeChan $ keyChannel state)
-  return state
+  initGL
+  return $ initKeys state
+
+initKeys :: SimulatorData -> SimulatorData
+initKeys simulator = foldl registerTrigger simulator triggers
+  where
+    registerTrigger sim (char, updater) = registerPressed sim char updater
+    triggers =
+      [ ('Q', \sim -> sim { running = False })
+      , ('H', \sim -> sim { helpOverlay = not $ helpOverlay sim })
+      , ('L', \sim -> sim { getLighting = not $ getLighting sim })
+      ]
+
+initGL :: IO () 
+initGL = do
+  -- Initialize the viewport and perspective.
+  GL.viewport $= (GL.Position 0 0, GL.Size width height)
+
+  GL.shadeModel $= GL.Smooth
+  GL.clearColor $= GL.Color4 0 0 0 0
+  GL.clearDepth $= 1
+  GL.depthFunc $= Just GL.Lequal
+  GL.hint GL.PerspectiveCorrection $= GL.Nicest
+
+  let specular = GL.Color4 1.0 1.0 1.0 1.0
+      diffuse = GL.Color4 0.5 1.0 0.5 0.5
+      shininess = 50.0
+      light0Position = GL.Vertex4 1.0 1.0 1.0 0.0
+      light1Position = GL.Vertex4 (-1.0) (-1.0) 1.0 0.0
+      light2Position = GL.Vertex4 1.0 1.0 (-1.0) 0.0
+      lightDiffuse = GL.Color4  1.0 1.0 1.0 1.0
+      lightSpecular = GL.Color4  0.1 0.1 0.1 1.0
+
+  GL.materialSpecular GL.FrontAndBack $= specular
+  GL.materialDiffuse GL.FrontAndBack $= diffuse
+  GL.materialShininess GL.FrontAndBack $= shininess
+
+  GL.position (GL.Light 0) $= light0Position
+  GL.position (GL.Light 1) $= light1Position
+  GL.position (GL.Light 2) $= light2Position
+
+  GL.specular (GL.Light 0) $= lightSpecular
+  GL.specular (GL.Light 1) $= lightSpecular
+  GL.specular (GL.Light 2) $= lightSpecular
+
+  GL.diffuse (GL.Light 1) $= lightDiffuse
+  GL.diffuse (GL.Light 2) $= lightDiffuse
+
+  GL.lighting $= GL.Enabled
+  GL.light (GL.Light 0) $= GL.Enabled
+  GL.light (GL.Light 1) $= GL.Enabled
+  GL.light (GL.Light 2) $= GL.Enabled
+  GL.texture GL.Texture2D $= GL.Enabled
 
 waitForNextFrame :: SimulatorData -> IO ()
 waitForNextFrame = readChan . ticker
@@ -206,6 +260,8 @@ waitForNextFrame = readChan . ticker
 update :: SimulatorData -> IO SimulatorData
 update simulator = do
   input <- collectInput simulator
+  print input
+  print $ getLighting simulator
   return $ foldl' updateWithKeyPress simulator input
   where
     updateWithKeyPress simulator (key, buttonState) =
@@ -297,7 +353,7 @@ drawScene simulator =
 drawOverlays :: SimulatorData -> IO ()
 drawOverlays simulator = 
   let heading = "Keyboard Commands"
-      overlayBorder = 30
+      overlayBorder = 30 :: GL.GLint
       borderPadding = 50
       lineSpacing = 30
       tabLocation = 300 
@@ -310,22 +366,26 @@ drawOverlays simulator =
 
       -- Allow blending for semi-transparent overview
       GL.blend $= GL.Enabled
+      GL.blendFunc $= (GL.SrcAlpha, GL.OneMinusSrcAlpha)
 
       -- Draw transparent quad covering most of scene
-      GL.color (GL.Color4 0.1 0.1 0.1 0.9 :: GL.Color4 GL.GLfloat)
+      GL.color (GL.Color4 0.1 0.1 0.1 0.8 :: GL.Color4 GL.GLclampf)
       GL.renderPrimitive GL.Quads $ do
         GL.vertex $ GL.Vertex2 overlayBorder overlayBorder
         GL.vertex $ GL.Vertex2 (width-overlayBorder) overlayBorder
         GL.vertex $ GL.Vertex2 (width-overlayBorder) (height-overlayBorder)
         GL.vertex $ GL.Vertex2 overlayBorder (height-overlayBorder)
 
+      GL.blend $= GL.Disabled
+
       -- Text color
-      GL.color (GL.Color3 0.9 0.9 0.9 :: GL.Color3 GL.GLfloat)
+      GL.color (GL.Color4 1.0 1.0 1.0 1.0 :: GL.Color4 GL.GLclampf)
 
       -- Help text heading
       headingWidth <- Fonts.stringWidth bold heading
       GL.preservingMatrix $ do
-        GL.rasterPos $ GL.Vertex2 (width-headingWidth `div` 2) (overlayBorder+10)
+        GL.rasterPos $ GL.Vertex2 ((width-headingWidth) `div` 2) (height - overlayBorder - 30)
+        GL.color (GL.Color4 1.0 1.0 1.0 1.0 :: GL.Color4 GL.GLclampf)
         Fonts.renderString bold heading
 
       -- Overlay help text
@@ -333,12 +393,11 @@ drawOverlays simulator =
       forM_ helpStrsWithIndices $ \(i, (key, helpText)) -> do
         let yLoc = textOffset + lineSpacing * i
             xLoc = textOffset
-        GL.preservingMatrix $ do
-          GL.rasterPos $ GL.Vertex2 xLoc yLoc
-          Fonts.renderString font key
+        GL.rasterPos $ GL.Vertex2 xLoc yLoc
+        Fonts.renderString font key
 
-          GL.rasterPos $ GL.Vertex2 (tabLocation - xLoc) 0
-          Fonts.renderString font helpText
+        GL.rasterPos $ GL.Vertex2 tabLocation yLoc
+        Fonts.renderString font helpText
 
 drawGround :: SimulatorData -> IO ()
 drawGround simulator = 
@@ -348,9 +407,8 @@ drawGround simulator =
     GL.materialDiffuse GL.FrontAndBack   $= GL.Color4 1.0 1.0 0.8 0.5
     GL.materialShininess GL.FrontAndBack $= 100.0
 
-
     -- Draw ground quad
-  --  GL.textureBinding  GL.Texture2D $= Just groundTex
+    GL.textureBinding  GL.Texture2D $= Just groundTex
     GL.renderPrimitive GL.Quads $ do
       n $ GL.Normal3 0 0 1
       tex $ GL.TexCoord2 0 0
@@ -363,7 +421,7 @@ drawGround simulator =
       GL.vertex $ GL.Vertex3 roomSize (-roomSize) 0
 
     -- Draw walls
- --   GL.textureBinding GL.Texture2D $= Just wallTex
+    GL.textureBinding GL.Texture2D $= Just wallTex
     GL.renderPrimitive GL.Quads $ do
       n $ GL.Normal3 1 0 0
       tex $ GL.TexCoord2 0 0
@@ -429,7 +487,6 @@ drawCoordinateAxes simulator = do
   -- Draw coordinate axes and arrows in colors, without lighting.
   flip finally (GL.lighting $= GL.Enabled) $ do 
     when (getLighting simulator) $ GL.lighting $= GL.Disabled
-
 
     -- Red x-axis line.
     c $ GL.Color3 1.0 0.0 0.0
@@ -524,7 +581,10 @@ registerHeld simulator char updater = registerKey simulator char callback
 
 registerPressed :: SimulatorData -> Char -> SimulatorUpdate -> SimulatorData
 registerPressed simulator char updater =
-  registerKey simulator char (\simulator _ -> updater simulator)
+  registerKey simulator char $ \simulator buttonState ->
+    case buttonState of
+      GLFW.Press -> updater simulator
+      GLFW.Release -> simulator
 
 -- Things that don't require IO
 isRunning :: SimulatorData -> Bool
