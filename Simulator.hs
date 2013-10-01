@@ -17,7 +17,7 @@ module Simulator (
   ) where
 
 import qualified Graphics.Rendering.OpenGL as GL
-import Graphics.Rendering.OpenGL (($=))
+import Graphics.Rendering.OpenGL (($=), get)
 import qualified Graphics.UI.GLFW as GLFW
 import Data.Array((!), elems)
 import qualified Graphics.Rendering.OpenGL.GLU as GLU
@@ -128,6 +128,12 @@ minDistance  = 1.0
 maxDistance :: Float
 maxDistance  = 10
 
+minTheta :: Float
+minTheta = 0
+
+maxTheta :: Float
+maxTheta = 89.5
+
 roomSize :: GL.GLfloat
 roomSize = realToFrac $ maxDistance * 1.1
 
@@ -204,13 +210,35 @@ initialize = do
   return $ initKeys state
 
 initKeys :: SimulatorData -> SimulatorData
-initKeys simulator = foldl registerTrigger simulator triggers
+initKeys simulator = simulatorWithPressedAndHeld
   where
+    simulatorWithPressed = foldl registerTrigger simulator triggers
+    simulatorWithPressedAndHeld = foldl registerHeldFunc simulatorWithPressed holds
     registerTrigger sim (char, updater) = registerPressed sim char updater
     triggers =
       [ ('Q', \sim -> sim { running = False })
       , ('H', \sim -> sim { helpOverlay = not $ helpOverlay sim })
       , ('L', \sim -> sim { getLighting = not $ getLighting sim })
+      , ('X', \sim -> sim { getGlobalAxes = not $ getGlobalAxes sim })
+      , ('V', \sim -> sim { getWireframe = not $ getWireframe sim })
+      , ('T', \sim -> sim { texturing = not $ texturing sim })
+      , (' ', \sim -> sim { getPhi      = initPhi,
+                           getTheta    = initTheta,
+                           getDistance = initDistance })
+      ]
+
+    registerHeldFunc sim (char, updater) = registerHeld sim char updater
+    bound min max newval = 
+      if newval < min then min
+      else if newval > max then max
+      else newval
+    holds = 
+      [ ('F', \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim + rotateRate) })
+      , ('R', \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim - rotateRate) })
+      , ('D', \sim -> sim { getPhi = getPhi sim + rotateRate })
+      , ('A', \sim -> sim { getPhi = getPhi sim - rotateRate })
+      , ('S', \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim + moveRate) })
+      , ('W', \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim - moveRate) })
       ]
 
 initGL :: IO () 
@@ -260,9 +288,8 @@ waitForNextFrame = readChan . ticker
 update :: SimulatorData -> IO SimulatorData
 update simulator = do
   input <- collectInput simulator
-  print input
-  print $ getLighting simulator
-  return $ foldl' updateWithKeyPress simulator input
+  let newsim = foldl' (flip ($)) simulator $ map snd $ frameActions simulator
+  return $ foldl' updateWithKeyPress newsim input
   where
     updateWithKeyPress simulator (key, buttonState) =
       case find ((== key) . GLFW.CharKey . fst) $ callbacks simulator of
@@ -361,8 +388,8 @@ drawOverlays simulator =
       bold = Fonts.TimesRoman24
       lighting = getLighting simulator
       textOffset = overlayBorder + borderPadding in when (helpOverlay simulator) $ do
-    flip finally (GL.lighting $= GL.Enabled >> GL.blend $= GL.Disabled) $ do 
-      when (getLighting simulator) $ GL.lighting $= GL.Disabled
+    flip finally (when (getLighting simulator) $ GL.lighting $= GL.Enabled) $ do 
+      GL.lighting $= GL.Disabled
 
       -- Allow blending for semi-transparent overview
       GL.blend $= GL.Enabled
@@ -378,17 +405,18 @@ drawOverlays simulator =
 
       GL.blend $= GL.Disabled
 
-      -- Text color
-      GL.color (GL.Color4 1.0 1.0 1.0 1.0 :: GL.Color4 GL.GLclampf)
+      -- Heading color
+      GL.color (GL.Color4 0.8 0.8 0.8 1.0 :: GL.Color4 GL.GLclampf)
 
       -- Help text heading
       headingWidth <- Fonts.stringWidth bold heading
       GL.preservingMatrix $ do
+
         GL.rasterPos $ GL.Vertex2 ((width-headingWidth) `div` 2) (height - overlayBorder - 30)
-        GL.color (GL.Color4 1.0 1.0 1.0 1.0 :: GL.Color4 GL.GLclampf)
         Fonts.renderString bold heading
 
-      -- Overlay help text
+      -- Overlay help text and color
+      GL.color (GL.Color4 0.5 0.5 0.5 1.0 :: GL.Color4 GL.GLclampf)
       let helpStrsWithIndices = zip [1..] $ keyboardHelpStrings simulator 
       forM_ helpStrsWithIndices $ \(i, (key, helpText)) -> do
         let yLoc = textOffset + lineSpacing * i
@@ -464,7 +492,7 @@ drawGround simulator =
       GL.vertex $ GL.Vertex3 (-roomSize) roomSize roomSize
 
     -- Remove texturing
-   -- GL.textureBinding GL.Texture2D $= Nothing
+    GL.textureBinding GL.Texture2D $= Nothing
 
 v :: GL.Vertex3 GL.GLfloat -> IO ()
 v = GL.vertex
