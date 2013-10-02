@@ -17,7 +17,7 @@ module Simulator (
   ) where
 
 import qualified Graphics.Rendering.OpenGL as GL
-import Graphics.Rendering.OpenGL (($=), get)
+import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.UI.GLFW as GLFW
 import Data.Array((!), elems)
 import qualified Graphics.Rendering.OpenGL.GLU as GLU
@@ -362,7 +362,6 @@ drawOverlays simulator =
       tabLocation = 300 
       font = Fonts.Helvetica18
       bold = Fonts.TimesRoman24
-      lighting = getLighting simulator
       textOffset = overlayBorder + borderPadding in when (helpOverlay simulator) $ do
     flip finally (when (getLighting simulator) $ enable Lighting) $ do 
       disable Lighting
@@ -466,7 +465,6 @@ drawGround simulator =
 
 drawCoordinateAxes :: SimulatorData -> IO ()
 drawCoordinateAxes simulator = do
-  let lighting = getLighting simulator
   -- Draw coordinate axes and arrows in colors, without lighting.
   flip finally (enable Lighting) $ do 
     when (getLighting simulator) $ disable Lighting
