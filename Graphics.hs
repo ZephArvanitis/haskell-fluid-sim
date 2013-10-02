@@ -25,7 +25,7 @@ data Diffuse = Diffuse Float Float Float
 
 getStateVar :: Option -> StateVar Capability
 getStateVar Lighting = lighting
-getStateVar (Light i)  = light $ GL.Light $ fromIntegral i
+getStateVar (Light i)  = light $ GL.Light $ int i
 getStateVar Texture = texture Texture2D
 getStateVar Blend = blend
 
@@ -35,11 +35,17 @@ enable opt = liftIO $ getStateVar opt $= Enabled
 disable :: MonadIO m => Option -> m ()
 disable opt = liftIO $ getStateVar opt $= Disabled
 
+int :: Int -> GLint
+int = fromIntegral
+
+real :: Float -> GLfloat
+real = realToFrac
+
 text :: (MonadIO m, Font f) => Int -> Int -> f -> String -> m ()
 text x y font string = liftIO $ do
-  rasterPos $ Vertex2 (fromIntegral x) (fromIntegral y :: GLint)
+  rasterPos $ Vertex2 (int x) (int y)
   renderString font string
-  rasterPos $ Vertex2 0 (0 :: GLint)
+  rasterPos $ Vertex2 0 (int 0)
 
 quads :: MonadIO m => IO () -> m ()
 quads = liftIO . renderPrimitive Quads
@@ -51,36 +57,36 @@ wires :: MonadIO m => IO () -> m ()
 wires = liftIO . renderPrimitive LineLoop
 
 point :: Int -> Int -> IO ()
-point x y = GL.vertex $ Vertex2 (fromIntegral x) (fromIntegral y :: GLint)
+point x y = GL.vertex $ Vertex2 (int x) (int y)
 
 vertex :: Float -> Float -> Float -> IO ()
-vertex x y z = liftIO $ GL.vertex $ Vertex3 (realToFrac x) (realToFrac y) (realToFrac z :: GLfloat)
+vertex x y z = liftIO $ GL.vertex $ Vertex3 (real x) (real y) (real z)
 
 rgb :: MonadIO m => Float -> Float -> Float -> m ()
-rgb r g b = liftIO $ color $ Color3 (realToFrac r :: GLfloat) (realToFrac g) (realToFrac b)
+rgb r g b = liftIO $ color $ Color3 (real r) (real g) (real b)
 
 rgba :: MonadIO m => Float -> Float -> Float -> Float -> m ()
-rgba r g b a = liftIO $ color $ Color4 (realToFrac r :: GLfloat) (realToFrac g) (realToFrac b) (realToFrac a)
+rgba r g b a = liftIO $ color $ Color4 (real r) (real g) (real b) (real a)
 
 rotate :: Float -> Float -> Float -> Float -> IO ()
-rotate angle x y z = liftIO $ GL.rotate (realToFrac angle) $ Vector3 (realToFrac x) (realToFrac y) (realToFrac z :: GLfloat)
+rotate angle x y z = liftIO $ GL.rotate (real angle) $ Vector3 (real x) (real y) (real z)
 
 translate :: Float -> Float -> Float -> IO ()
-translate x y z = liftIO $ GL.translate $ Vector3 (realToFrac x) (realToFrac y) (realToFrac z :: GLfloat)
+translate x y z = liftIO $ GL.translate $ Vector3 (real x) (real y) (real z)
 
 scale :: Float -> Float -> Float -> IO ()
-scale x y z = liftIO $ GL.scale (realToFrac x) (realToFrac y) (realToFrac z :: GLfloat)
+scale x y z = liftIO $ GL.scale (real x) (real y) (real z)
 
 normal :: Float -> Float -> Float -> IO ()
-normal x y z = liftIO $ GL.normal $ Normal3 (realToFrac x) (realToFrac y) (realToFrac z :: GLfloat)
+normal x y z = liftIO $ GL.normal $ Normal3 (real x) (real y) (real z)
 
 texcoord :: Float -> Float -> IO ()
-texcoord u v = texCoord $ TexCoord2 (realToFrac u) (realToFrac v :: GLfloat)
+texcoord u v = texCoord $ TexCoord2 (real u) (real v)
 
 initializeGraphics :: Int -> Int -> [PointLight] -> IO () 
 initializeGraphics width height lights = do
   -- Initialize the viewport and perspective.
-  viewport $= (Position 0 0, Size (fromIntegral width) (fromIntegral height))
+  viewport $= (Position 0 0, Size (int width) (int height))
 
   shadeModel $= Smooth
   clearColor $= Color4 0 0 0 0
@@ -97,6 +103,6 @@ initializeGraphics width height lights = do
   materialShininess FrontAndBack $= matShininess
 
   forM_ (zip [1..] lights) $ \(i, PointLight (PointAtInfinity x y z) (Specular sr sg sb) (Diffuse dr dg db)) -> do
-    position (GL.Light i) $= Vertex4 (realToFrac x) (realToFrac y) (realToFrac z) (0.0 :: GLfloat)
-    specular (GL.Light i) $= Color4 (realToFrac sr) (realToFrac sg) (realToFrac sb) (1.0 :: GLfloat)
-    diffuse  (GL.Light i) $= Color4 (realToFrac dr) (realToFrac dg) (realToFrac db) (1.0 :: GLfloat)
+    position (GL.Light i) $= Vertex4 (real x) (real y) (real z) 0.0
+    specular (GL.Light i) $= Color4 (real sr) (real sg) (real sb) 1.0
+    diffuse  (GL.Light i) $= Color4 (real dr) (real dg) (real db) 1.0
