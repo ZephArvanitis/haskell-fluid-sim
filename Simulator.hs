@@ -13,7 +13,8 @@ module Simulator (
   SimulatorData(..),
   waitForNextFrame,
   registerHeld,
-  registerPressed
+  registerPressed,
+  Simulator,
   ) where
 
 import qualified Graphics.Rendering.OpenGL as GL
@@ -24,6 +25,8 @@ import qualified Graphics.Rendering.OpenGL.GLU as GLU
 import Graphics.UI.GLUT.Objects (renderObject, Flavour(Solid), Object(Cone))
 import Graphics.UI.GLUT.Fonts as Fonts
 import qualified Graphics.UI.GLUT.Initialization as GLUTInit
+import Control.Concurrent.STM.TChan
+import Control.Concurrent.STM(atomically)
 import Control.Concurrent.Chan
 import Control.Concurrent.Timer
 import Control.Concurrent.Suspend.Lifted(msDelay)
@@ -35,8 +38,7 @@ import Control.Monad.State
 import ObjectParser
 import Graphics
 
-import Control.Exception(finally)
-import Data.List(foldl', find)
+import Data.List(find)
 import GHC.Float
 
 data SimulatorData = SimulatorData {
@@ -89,10 +91,10 @@ data SimulatorData = SimulatorData {
   callbacks :: [(Char, KeyCallback)],
 
   -- Things that happen every frame
-  frameActions :: [(Char, SimulatorData -> SimulatorData)],
+  frameActions :: [(Char, SimulatorUpdate)],
 
   -- Key event channel
-  keyChannel :: Chan (GLFW.Key, GLFW.KeyButtonState),
+  keyChannel :: TChan (GLFW.Key, GLFW.KeyButtonState),
 
   -- Textures!
   boxTextures :: (GL.TextureObject, GL.TextureObject)
@@ -145,7 +147,7 @@ roomSize = maxDistance * 1.1
 initSimulatorState :: IO SimulatorData
 initSimulatorState = do
   ticker <- newChan
-  keyChannel <- newChan
+  keyChannel <- newTChanIO
 
   let loadTextureObject filename = do
         [texName] <- GL.genObjectNames 1
@@ -195,6 +197,9 @@ width = 640
 height :: Integral a => a
 height = 480
 
+aspectRatio :: Fractional a => a
+aspectRatio = fromIntegral (width :: Integer) / fromIntegral (height :: Integer)
+
 initialize :: IO SimulatorData
 initialize = do
   True <- GLFW.initialize
@@ -207,40 +212,40 @@ initialize = do
   GLFW.windowTitle $= "Fluid Simulation Thingamadoop" 
   state <- initSimulatorState
   repeatedTimer (writeChan (ticker state) ()) $ msDelay millisPerFrame
-  GLFW.keyCallback $= (curry $ writeChan $ keyChannel state)
+  GLFW.keyCallback $= curry (atomically . writeTChan (keyChannel state))
   initGL
-  return $ initKeys state
+  snd <$> runStateT initKeys state
 
-initKeys :: SimulatorData -> SimulatorData
-initKeys simulator = simulatorWithPressedAndHeld
+initKeys :: SimulatorUpdate
+initKeys = do
+    forM_ triggers registerTrigger
+    forM_ holds registerHeldFunc
   where
-    simulatorWithPressed = foldl registerTrigger simulator triggers
-    simulatorWithPressedAndHeld = foldl registerHeldFunc simulatorWithPressed holds
-    registerTrigger sim (char, updater) = registerPressed sim char updater
+    registerTrigger (char, updater) = registerPressed char updater
     triggers =
-      [ ('Q', \sim -> sim { running = False })
-      , ('H', \sim -> sim { helpOverlay = not $ helpOverlay sim })
-      , ('L', \sim -> sim { getLighting = not $ getLighting sim })
-      , ('X', \sim -> sim { getGlobalAxes = not $ getGlobalAxes sim })
-      , ('V', \sim -> sim { getWireframe = not $ getWireframe sim })
-      , ('T', \sim -> sim { texturing = not $ texturing sim })
-      , (' ', \sim -> sim { getPhi      = initPhi,
+      [ ('Q', modify $ \sim -> sim { running = False })
+      , ('H', modify $ \sim -> sim { helpOverlay = not $ helpOverlay sim })
+      , ('L', modify $ \sim -> sim { getLighting = not $ getLighting sim })
+      , ('X', modify $ \sim -> sim { getGlobalAxes = not $ getGlobalAxes sim })
+      , ('V', modify $ \sim -> sim { getWireframe = not $ getWireframe sim })
+      , ('T', modify $ \sim -> sim { texturing = not $ texturing sim })
+      , (' ', modify $ \sim -> sim { getPhi      = initPhi,
                            getTheta    = initTheta,
                            getDistance = initDistance })
       ]
 
-    registerHeldFunc sim (char, updater) = registerHeld sim char updater
-    bound min max newval = 
-      if newval < min then min
-      else if newval > max then max
-      else newval
+    registerHeldFunc (char, updater) = registerHeld char updater
+    bound min max newval
+      | newval < min = min
+      | newval > max = max
+      | otherwise = newval
     holds = 
-      [ ('F', \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim + rotateRate) })
-      , ('R', \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim - rotateRate) })
-      , ('D', \sim -> sim { getPhi = getPhi sim + rotateRate })
-      , ('A', \sim -> sim { getPhi = getPhi sim - rotateRate })
-      , ('S', \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim + moveRate) })
-      , ('W', \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim - moveRate) })
+      [ ('F', modify $ \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim + rotateRate) })
+      , ('R', modify $ \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim - rotateRate) })
+      , ('D', modify $ \sim -> sim { getPhi = getPhi sim + rotateRate })
+      , ('A', modify $ \sim -> sim { getPhi = getPhi sim - rotateRate })
+      , ('S', modify $ \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim + moveRate) })
+      , ('W', modify $ \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim - moveRate) })
       ]
 
 initGL :: IO () 
@@ -258,57 +263,61 @@ initGL = do
         specular = Specular 0.1 0.1 0.1
         diffuse = Diffuse 1.0 1.0 1.0
 
-waitForNextFrame :: SimulatorData -> IO ()
-waitForNextFrame = readChan . ticker
+waitForNextFrame :: SimulatorUpdate
+waitForNextFrame = gets ticker >>= liftIO . readChan
 
-update :: SimulatorData -> IO SimulatorData
-update simulator = do
-  input <- collectInput simulator
-  let newsim = foldl' (flip ($)) simulator $ map snd $ frameActions simulator
-  return $ foldl' updateWithKeyPress newsim input
+update :: SimulatorUpdate
+update = do
+  input <- collectInput
+  actions <- map snd <$> gets frameActions
+  sequence_ actions
+  forM_ input updateWithKeyPress
   where
-    updateWithKeyPress simulator (key, buttonState) =
-      case find ((== key) . GLFW.CharKey . fst) $ callbacks simulator of
-        Nothing -> simulator
-        Just (_, callback) -> callback simulator buttonState 
+    updateWithKeyPress (key, buttonState) = do
+      maybeCallback <- gets $ find ((== key) . GLFW.CharKey . fst) . callbacks
+      case maybeCallback of
+        Nothing -> return ()
+        Just (_, callback) -> callback buttonState 
 
-collectInput :: SimulatorData -> IO [(GLFW.Key, GLFW.KeyButtonState)]
-collectInput simulator@(SimulatorData{keyChannel = chan}) = do
-  empty <- isEmptyChan chan
+collectInput :: Simulator [(GLFW.Key, GLFW.KeyButtonState)]
+collectInput = do
+  chan <- gets keyChannel
+  empty <- liftIO $ atomically $ isEmptyTChan chan
   if empty then return [] else do
-    thing <- readChan chan
-    things <- collectInput simulator
+    thing <- liftIO $ atomically $ readTChan chan
+    things <- collectInput
     return $ thing : things
 
-type KeyCallback = (SimulatorData -> GLFW.KeyButtonState -> SimulatorData)
-type SimulatorUpdate = (SimulatorData -> SimulatorData)
+type KeyCallback = (GLFW.KeyButtonState -> SimulatorUpdate)
+type SimulatorUpdate = Simulator ()
 
-draw :: SimulatorData -> IO ()
-draw state = do
-  GL.clear [GL.ColorBuffer, GL.DepthBuffer]
+draw :: SimulatorUpdate
+draw = do
+  liftIO $ GL.clear [GL.ColorBuffer, GL.DepthBuffer]
 
   -- Perspective or something
-  GL.matrixMode $= GL.Projection
-  GL.loadIdentity
-  let aspectRatio = fromIntegral width / fromIntegral height
-  GLU.perspective 45.0 aspectRatio 0.1 100.0
+  liftIO $ GL.matrixMode $= GL.Projection
+  liftIO GL.loadIdentity
+  liftIO $ GLU.perspective 45.0 aspectRatio 0.1 100.0
 
-  GL.matrixMode $= GL.Modelview 0
-  GL.loadIdentity
-  drawScene state
+  liftIO $ GL.matrixMode $= GL.Modelview 0
+  liftIO GL.loadIdentity
+  drawScene
 
-  GL.matrixMode $= GL.Projection
-  GL.loadIdentity
-  GL.ortho 0.0  (fromIntegral width)  0 (fromIntegral height)  0.0 30.0
+  liftIO $ GL.matrixMode $= GL.Projection
+  liftIO GL.loadIdentity
+  liftIO $ GL.ortho 0.0  (fromIntegral (width :: Integer))  0 (fromIntegral (height :: Integer))  0.0 30.0
 
-  GL.matrixMode $= GL.Modelview 0
-  GL.loadIdentity
-  drawOverlays state
+  liftIO $ GL.matrixMode $= GL.Modelview 0
+  liftIO GL.loadIdentity
+  drawOverlays
 
-  GL.flush
-  GLFW.swapBuffers
+  liftIO GL.flush
+  liftIO GLFW.swapBuffers
 
+radian ::  Floating a => a -> a
 radian degrees = pi * (degrees / 180.0)
+
 cross :: Vector -> Vector -> Vector
 cross (ObjectParser.Vertex x1 y1 z1) (ObjectParser.Vertex x2 y2 z2) = ObjectParser.Vertex {
   x = y1*z2 - z1*y2,
@@ -316,45 +325,44 @@ cross (ObjectParser.Vertex x1 y1 z1) (ObjectParser.Vertex x2 y2 z2) = ObjectPars
   z = x1*y2 - y1*x2
 }
 
-drawScene :: SimulatorData -> IO ()
-drawScene simulator =
+drawScene :: SimulatorUpdate
+drawScene = do
   -- Compute camera location based on spherical coordinates
-  let distance = getDistance simulator
-      theta = radian $ getTheta simulator
-      phi = radian $ getPhi simulator
-      meshes = getMeshes simulator
-      cameraX = float2Double $ distance * sin theta * cos phi
+  distance <- gets getDistance
+  theta <- radian <$> gets getTheta
+  phi <- radian <$> gets getPhi
+  meshes <- gets getMeshes
+  let cameraX = float2Double $ distance * sin theta * cos phi
       cameraY = float2Double $ distance * sin theta * sin phi
       cameraZ = float2Double $ distance * cos theta
       camera = Vertex (double2Float cameraX) (double2Float cameraY) (double2Float cameraZ)
 
-      globalAxes = getGlobalAxes simulator
-      lighting = getLighting simulator
-      wireframing = getWireframe simulator
+  globalAxes <- gets getGlobalAxes
+  lighting <- gets getLighting
+  wireframing <- gets getWireframe
 
-      -- Compute "up" vector which defines camera orientation. We do this 
-      -- by taking the cross product of the camera vector with the unit vector
-      -- pointing in the direction of maximal increase of zenith.
-      azimuthGrad = Vertex (-sin phi) (cos phi) 0
-      up = cross camera azimuthGrad in
-    do
-      -- Set up camera direction
-      GLU.lookAt (GL.Vertex3 (realToFrac cameraX) (realToFrac cameraY) (realToFrac cameraZ :: GL.GLdouble)) (GL.Vertex3 0 0 0.5) (GL.Vector3 (realToFrac $ x up) (realToFrac $ y up) (realToFrac $ z up))
+  -- Compute "up" vector which defines camera orientation. We do this 
+  -- by taking the cross product of the camera vector with the unit vector
+  -- pointing in the direction of maximal increase of zenith.
+  let azimuthGrad = Vertex (-sin phi) (cos phi) 0
+      up = cross camera azimuthGrad
 
-      -- Disable lighting when using wireframing
-      flip finally (enable Lighting) $ do 
-        when (lighting && wireframing) $ disable Lighting
+  -- Set up camera direction
+  liftIO $ GLU.lookAt (GL.Vertex3 (realToFrac cameraX) (realToFrac cameraY) (realToFrac cameraZ :: GL.GLdouble)) (GL.Vertex3 0 0 0.5) (GL.Vector3 (realToFrac $ x up) (realToFrac $ y up) (realToFrac $ z up))
 
-        -- Draw simulation boundaries to avoid ugly black background
-        drawGround simulator
+  -- Disable lighting when using wireframing
+  temporarilyIf (lighting && wireframing) Disabled Lighting $ do
 
-        -- Draw all meshes
-        forM_ meshes $ drawMesh simulator
+    -- Draw simulation boundaries to avoid ugly black background
+    drawGround
 
-        when globalAxes $ drawCoordinateAxes simulator
+    -- Draw all meshes
+    forM_ meshes drawMesh
 
-drawOverlays :: SimulatorData -> IO ()
-drawOverlays simulator = 
+    when globalAxes drawCoordinateAxes
+
+drawOverlays :: SimulatorUpdate
+drawOverlays = 
   let heading = "Keyboard Commands"
       overlayBorder = 30
       borderPadding = 50
@@ -362,13 +370,14 @@ drawOverlays simulator =
       tabLocation = 300 
       font = Fonts.Helvetica18
       bold = Fonts.TimesRoman24
-      textOffset = overlayBorder + borderPadding in when (helpOverlay simulator) $ do
-    flip finally (when (getLighting simulator) $ enable Lighting) $ do 
-      disable Lighting
+      textOffset = overlayBorder + borderPadding in do
+
+    showOverlay <- gets helpOverlay
+    when showOverlay $ temporarily Disabled Lighting $ do
 
       -- Allow blending for semi-transparent overview
       enable Blend
-      GL.blendFunc $= (GL.SrcAlpha, GL.OneMinusSrcAlpha)
+      liftIO $ GL.blendFunc $= (GL.SrcAlpha, GL.OneMinusSrcAlpha)
 
       -- Draw transparent quad covering most of scene
       rgba 0.1 0.1 0.1 0.8
@@ -384,136 +393,118 @@ drawOverlays simulator =
       rgb 0.8 0.8 0.8
 
       -- Help text heading
-      headingWidth <- fromIntegral <$> Fonts.stringWidth bold heading
+      headingWidth <- liftIO $ fromIntegral <$> Fonts.stringWidth bold heading
       text ((width-headingWidth) `div` 2) (height - overlayBorder - 30) bold heading
 
       -- Overlay help text and color
       rgb 0.5 0.5 0.5
-      let helpStrsWithIndices = zip [1..] $ keyboardHelpStrings simulator 
+      helpStrsWithIndices <- gets $ zip [1..] . keyboardHelpStrings
       forM_ helpStrsWithIndices $ \(i, (key, helpText)) -> do
         let yLoc = textOffset + lineSpacing * i
             xLoc = textOffset
         text xLoc yLoc font key
         text tabLocation yLoc font helpText
 
-drawGround :: SimulatorData -> IO ()
-drawGround simulator = 
-  let (wallTex, groundTex) = boxTextures simulator in do
-    -- Use a white material to use the texture's natural color.
-    GL.materialSpecular GL.FrontAndBack  $= GL.Color4 1.0 1.0 1.0 1.0
-    GL.materialDiffuse GL.FrontAndBack   $= GL.Color4 1.0 1.0 0.8 0.5
-    GL.materialShininess GL.FrontAndBack $= 100.0
+drawGround :: SimulatorUpdate
+drawGround = do
+  (wallTex, groundTex) <- gets boxTextures
 
-    -- Draw ground quad
-    GL.textureBinding  GL.Texture2D $= Just groundTex
-    GL.renderPrimitive GL.Quads $ do
-      normal 0 0 1
-      texcoord 0 0
-      vertex (-roomSize) (-roomSize) 0
-      texcoord 0 1
-      vertex (-roomSize) roomSize 0
-      texcoord 1 1
-      vertex roomSize roomSize 0
-      texcoord 1 0
-      vertex roomSize (-roomSize) 0
+  -- Draw ground quad
+  useTexture groundTex $ quads $ do
+    normal 0 0 1
+    quad [(-roomSize, -roomSize, 0),
+          (-roomSize, roomSize, 0),
+          (roomSize, roomSize, 0),
+          (roomSize, -roomSize, 0)]
 
-    -- Draw walls
-    GL.textureBinding GL.Texture2D $= Just wallTex
-    GL.renderPrimitive GL.Quads $ do
-      normal 1 0 0
-      texcoord 0 0
-      vertex (-roomSize) (-roomSize) 0
-      texcoord 0 1
-      vertex (-roomSize) roomSize 0
-      texcoord 1 1
-      vertex (-roomSize) roomSize roomSize
-      texcoord 1 0
-      vertex (-roomSize) (-roomSize) roomSize
+  -- Draw walls
+  useTexture wallTex $ quads $ do
+    normal 1 0 0
+    quad [(-roomSize, -roomSize, 0),
+          (-roomSize, roomSize, 0),
+          (-roomSize, roomSize, roomSize),
+          (-roomSize, -roomSize, roomSize)]
 
-      normal (-1) 0 0
-      texcoord 0 0
-      vertex roomSize (-roomSize) 0
-      texcoord 0 1
-      vertex roomSize roomSize 0
-      texcoord 1 1
-      vertex roomSize roomSize roomSize
-      texcoord 1 0
-      vertex roomSize (-roomSize) roomSize
+    normal (-1) 0 0
+    quad [(roomSize, -roomSize, 0),
+          (roomSize, roomSize, 0),
+          (roomSize, roomSize, roomSize),
+          (roomSize, -roomSize, roomSize)]
 
-      normal 0 1 0
-      texcoord 0 0
-      vertex (-roomSize) (-roomSize) 0
-      texcoord 0 1
-      vertex roomSize (-roomSize) 0
-      texcoord 1 1
-      vertex roomSize (-roomSize) roomSize
-      texcoord 1 0
-      vertex (-roomSize) (-roomSize) roomSize
+    normal 0 1 0
+    quad [(-roomSize, -roomSize, 0),
+          (roomSize,    -roomSize, 0),
+          (roomSize,    -roomSize, roomSize),
+          (-roomSize, -roomSize, roomSize)]
 
-      normal 0 (-1) 0
-      texcoord 0 0
-      vertex (-roomSize) roomSize 0
-      texcoord 0 1
-      vertex roomSize roomSize 0
-      texcoord 1 1
-      vertex roomSize roomSize roomSize
-      texcoord 1 0
-      vertex (-roomSize) roomSize roomSize
+    normal 0 (-1) 0
+    quad [(-roomSize, roomSize, 0),
+          (roomSize, roomSize, 0),
+          (roomSize, roomSize, roomSize),
+          (-roomSize, roomSize, roomSize)]
 
-    -- Remove texturing
-    GL.textureBinding GL.Texture2D $= Nothing
+quad ::  [(Float, Float, Float)] -> IO ()
+quad [(x1, y1, z1),
+      (x2, y2, z2),
+      (x3, y3, z3),
+      (x4, y4, z4)] = do
+  texcoord 0 0
+  vertex x1 y1 z1
+  texcoord 0 1
+  vertex x2 y2 z2
+  texcoord 1 1
+  vertex x3 y3 z3
+  texcoord 1 0
+  vertex x4 y4 z4
 
-drawCoordinateAxes :: SimulatorData -> IO ()
-drawCoordinateAxes simulator = do
-  -- Draw coordinate axes and arrows in colors, without lighting.
-  flip finally (enable Lighting) $ do 
-    when (getLighting simulator) $ disable Lighting
+-- | Draw coordinate axes and arrows in colors, without lighting.
+drawCoordinateAxes :: SimulatorUpdate
+drawCoordinateAxes = temporarily Disabled Lighting $ do
+  -- Red x-axis line.
+  rgb 1.0 0.0 0.0
+  wirelines $ do
+    vertex 0.0 0.0 0.0
+    vertex 1.0 0.0 0.0
 
-    -- Red x-axis line.
-    rgb 1.0 0.0 0.0
-    GL.renderPrimitive GL.Lines $ do
-      vertex 0.0 0.0 0.0
-      vertex 1.0 0.0 0.0
+  -- red arrow.
+  localize $ do  
+    translate 1.0 0.0 0.0
+    rotate 90 0.0 1.0 0.0
+    renderObject Solid $ Cone 0.04 0.2 10 10
 
-    -- red arrow.
-    GL.preservingMatrix $ do  
-      translate 1.0 0.0 0.0
-      rotate 90 0.0 1.0 0.0
-      renderObject Solid $ Cone 0.04 0.2 10 10
+  -- green y-axis line.
+  rgb 0.0 1.0 0.0
+  wirelines $ do
+    vertex 0.0 0.0 0.0
+    vertex 0.0 1.0 0.0
 
-    -- green y-axis line.
-    rgb 0.0 1.0 0.0
-    GL.renderPrimitive GL.Lines $ do
-      vertex 0.0 0.0 0.0
-      vertex 0.0 1.0 0.0
+  -- green arrow.
+  localize $ do
+    translate 0.0 1.0 0.0
+    rotate (-90) 1.0 0.0 0.0
+    renderObject Solid $ Cone 0.04 0.2 10 10
 
-    -- green arrow.
-    GL.preservingMatrix $ do
-      translate 0.0 1.0 0.0
-      rotate (-90) 1.0 0.0 0.0
-      renderObject Solid $ Cone 0.04 0.2 10 10
+  -- blue z-axis line.
+  rgb 0.0 0.0 1.0
+  wirelines $ do
+    vertex 0.0 0.0 0.0
+    vertex 0.0 0.0 1.0
 
-    -- blue z-axis line.
-    rgb 0.0 0.0 1.0
-    GL.renderPrimitive GL.Lines $ do
-      vertex 0.0 0.0 0.0
-      vertex 0.0 0.0 1.0
+  -- Blue arrow.
+  localize $ do
+    translate 0.0 0.0 1.0
+    rotate (-90) 0.0 0.0 1.0
+    renderObject Solid $ Cone 0.04 0.2 10 10
 
-    -- Blue arrow.
-    GL.preservingMatrix $ do
-      translate 0.0 0.0 1.0
-      rotate (-90) 0.0 0.0 1.0
-      renderObject Solid $ Cone 0.04 0.2 10 10
-
-drawMesh :: SimulatorData -> Mesh -> IO ()
-drawMesh simulator mesh = do
+drawMesh :: Mesh -> SimulatorUpdate
+drawMesh mesh = do
   let verts = vertices mesh
       fs = faces mesh
       norms = vertexNormals mesh
-      wireframe = getWireframe simulator
+  wireframe <- gets getWireframe
 
 	-- Apply local transformations
-  GL.preservingMatrix $ do
+  localize $ do
     translate (dx mesh) (dy mesh) (dz mesh) 
     rotate (rz mesh) 0 0 1 
     rotate (ry mesh) 0 1 0 
@@ -525,8 +516,8 @@ drawMesh simulator mesh = do
       when wireframe $ rgb 1.0 1.0 1.0
       let mode = if wireframe then wires else
             case face of
-              Triangle _ _ _ -> tris
-              Quad _ _ _ _ -> quads
+              Triangle {} -> tris
+              Quad {} -> quads
 
       let getVertIndices (Triangle a b c) = [a, b, c]
           getVertIndices (Quad a b c d) = [a, b, c, d]
@@ -543,57 +534,56 @@ terminate = GLFW.closeWindow >> GLFW.terminate
 -- Key registering
 
 -- Raw
-registerKey :: SimulatorData -> Char -> KeyCallback -> SimulatorData
-registerKey simulator char callback = simulator {
+registerKey :: Char -> KeyCallback -> SimulatorUpdate
+registerKey char callback = modify $ \simulator -> simulator {
   callbacks = (char, callback) : callbacks simulator
 }
 
 -- Nice
-registerHeld :: SimulatorData -> Char -> SimulatorUpdate -> SimulatorData
-registerHeld simulator char updater = registerKey simulator char callback
+registerHeld :: Char -> SimulatorUpdate -> SimulatorUpdate
+registerHeld char updater = registerKey char callback
   where 
-    callback (simulator@SimulatorData{frameActions = frameActions}) buttonState = 
-      simulator { frameActions = newFrameActions }
+    callback buttonState = modify $ \sim -> sim { frameActions = newFrameActions $ frameActions sim }
       where
-        newFrameActions =
+        newFrameActions oldFrameActions =
           case buttonState of
-            GLFW.Release -> filter ((/= char) . fst) frameActions
-            GLFW.Press -> (char, updater) : frameActions
+            GLFW.Release -> filter ((/= char) . fst) oldFrameActions
+            GLFW.Press -> (char, updater) : oldFrameActions
 
-registerPressed :: SimulatorData -> Char -> SimulatorUpdate -> SimulatorData
-registerPressed simulator char updater =
-  registerKey simulator char $ \simulator buttonState ->
+registerPressed :: Char -> SimulatorUpdate -> SimulatorUpdate
+registerPressed char updater =
+  registerKey char $ \buttonState ->
     case buttonState of
-      GLFW.Press -> updater simulator
-      GLFW.Release -> simulator
+      GLFW.Press -> updater
+      GLFW.Release -> return ()
 
 -- Things that don't require IO
-isRunning :: SimulatorData -> Bool
-isRunning = running
+isRunning :: Simulator Bool
+isRunning = gets running
 
-isPaused :: SimulatorData -> Bool
-isPaused = paused
+isPaused :: Simulator Bool
+isPaused = gets paused
 
-shouldRestart :: SimulatorData -> Bool
-shouldRestart = shouldRestartSimulation
+shouldRestart :: Simulator Bool
+shouldRestart = gets shouldRestartSimulation
 
-setHasRestarted :: SimulatorData -> SimulatorData
-setHasRestarted simulator = simulator {
+setHasRestarted :: SimulatorUpdate
+setHasRestarted = modify $ \simulator -> simulator {
     shouldRestartSimulation = False
 }
 
-addHelpText :: SimulatorData -> String -> String -> SimulatorData
-addHelpText simulator key text = 
+addHelpText ::  String -> String -> SimulatorUpdate
+addHelpText key text = modify $ \simulator -> 
   simulator {
     keyboardHelpStrings = keyboardHelpStrings simulator ++ [(key, text)]
   }
     
-addMesh :: SimulatorData -> Mesh -> SimulatorData
-addMesh simulator mesh = simulator {
+addMesh :: Mesh -> SimulatorUpdate
+addMesh mesh = modify $ \simulator -> simulator {
   getMeshes = mesh : getMeshes simulator
 }
 
-deleteMesh :: SimulatorData -> MeshName -> SimulatorData
-deleteMesh simulator meshname = simulator {
+deleteMesh :: MeshName -> SimulatorUpdate
+deleteMesh meshname = modify $ \simulator -> simulator {
   getMeshes = filter ((/= meshname) . name) $ getMeshes simulator
 }

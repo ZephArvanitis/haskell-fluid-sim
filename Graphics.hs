@@ -1,13 +1,16 @@
 module Graphics (
   enable, disable, Option(..),
   text,
-  quads, tris, wires,
+  quads, tris, wires, wirelines,
   point, vertex,
   rgb, rgba,
-  rotate, translate, scale,
+  localize, rotate, translate, scale,
   normal, texcoord,
   PointLight(..), PointAtInfinity(..), Specular(..), Diffuse(..),
-  initializeGraphics
+  initializeGraphics,
+  temporarily, temporarilyIf,
+  Capability(..),
+  useTexture
 ) where
 
 import Graphics.Rendering.OpenGL hiding (Texture, Light, Blend, Specular, Diffuse, vertex, rotate, translate, scale, normal)
@@ -50,6 +53,9 @@ text x y font string = liftIO $ do
 quads :: MonadIO m => IO () -> m ()
 quads = liftIO . renderPrimitive Quads
 
+wirelines :: MonadIO m => IO () -> m ()
+wirelines = liftIO . renderPrimitive Lines
+
 tris :: MonadIO m => IO () -> m ()
 tris = liftIO . renderPrimitive Triangles
 
@@ -68,6 +74,9 @@ rgb r g b = liftIO $ color $ Color3 (real r) (real g) (real b)
 rgba :: MonadIO m => Float -> Float -> Float -> Float -> m ()
 rgba r g b a = liftIO $ color $ Color4 (real r) (real g) (real b) (real a)
 
+localize :: (MonadIO m) => IO a -> m a
+localize = liftIO . preservingMatrix
+
 rotate :: Float -> Float -> Float -> Float -> IO ()
 rotate angle x y z = liftIO $ GL.rotate (real angle) $ Vector3 (real x) (real y) (real z)
 
@@ -82,6 +91,28 @@ normal x y z = liftIO $ GL.normal $ Normal3 (real x) (real y) (real z)
 
 texcoord :: Float -> Float -> IO ()
 texcoord u v = texCoord $ TexCoord2 (real u) (real v)
+
+temporarilyIf :: MonadIO m => Bool -> Capability -> Option -> m b -> m b
+temporarilyIf cond status opt action =
+  if cond
+  then temporarily status opt action
+  else action
+
+temporarily :: MonadIO m => Capability -> Option -> m b -> m b
+temporarily status opt action = do
+    let statevar = getStateVar opt
+    oldStatus <- liftIO $ get statevar
+    liftIO $ statevar $= status
+    val <- action
+    liftIO $ statevar $= oldStatus
+    return val
+
+useTexture :: MonadIO m => TextureObject -> m a -> m a
+useTexture tex action = do
+    liftIO (textureBinding Texture2D $= Just tex)
+    val <- action
+    liftIO (textureBinding Texture2D $= Nothing)
+    return val
 
 initializeGraphics :: Int -> Int -> [PointLight] -> IO () 
 initializeGraphics width height lights = do
