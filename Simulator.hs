@@ -15,6 +15,7 @@ module Simulator (
   registerHeld,
   registerPressed,
   Simulator,
+  runSimulator
   ) where
 
 import qualified Graphics.Rendering.OpenGL as GL
@@ -120,19 +121,19 @@ rotateRate = 2.0
 
 -- Camera positioning parameters
 initPhi :: Float
-initPhi      = 20.0
+initPhi = 20.0
 
 initTheta :: Float
-initTheta    = 40.0
+initTheta = 40.0
 
 initDistance :: Float
 initDistance = 6.0
 
 minDistance :: Float
-minDistance  = 1.0
+minDistance = 1.0
 
 maxDistance :: Float
-maxDistance  = 10
+maxDistance = 10
 
 minTheta :: Float
 minTheta = 0
@@ -142,7 +143,6 @@ maxTheta = 89.5
 
 roomSize :: Float
 roomSize = maxDistance * 1.1
-
 
 initSimulatorState :: IO SimulatorData
 initSimulatorState = do
@@ -215,6 +215,9 @@ initialize = do
   GLFW.keyCallback $= curry (atomically . writeTChan (keyChannel state))
   initGL
   snd <$> runStateT initKeys state
+
+runSimulator :: Simulator a -> IO () 
+runSimulator action = initialize >>= runStateT action >> terminate
 
 initKeys :: SimulatorUpdate
 initKeys = do

@@ -2,7 +2,7 @@ import Simulator
 import Control.Monad.State
 
 main ::  IO ()
-main = Simulator.initialize >>= runStateT loop >> Simulator.terminate
+main = runSimulator loop
 
 loop :: Simulator ()
 loop = do
