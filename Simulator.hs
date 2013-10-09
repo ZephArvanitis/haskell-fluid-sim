@@ -41,65 +41,58 @@ import Graphics
 
 import Data.List(find)
 import GHC.Float
+import Data.Map(Map, insert, delete, elems, empty)
+import Control.Lens
 
 data SimulatorData = SimulatorData {
 	-- Main loop will exit if running becomes false.
-	running :: Bool,
+	_running :: Bool,
 
 	-- Pause simulation but not visualization
-	paused :: Bool,
+	_paused :: Bool,
 
   -- Ticker for frame rate
-  ticker :: Chan (),
-
-	-- Restart simulation: this is a little funky; the flag to restart is
-	-- here, but the simulation restart has to happen in main, so the
-	-- function ShouldRestartSimulation() is a little...awkward.
-	shouldRestartSimulation :: Bool,
+  _frameTicker :: Chan (),
 
 	-- Use help overlay
-	helpOverlay :: Bool,
+	_showingHelp :: Bool,
 
 	-- Display coordinate axes
-	getGlobalAxes :: Bool,
+	_showingAxes :: Bool,
 
 	-- Enable wireframe drawing
-	getWireframe :: Bool,
+	_wireframeEnabled :: Bool,
 
 	-- Whether lighting is enabled
-	getLighting :: Bool,
+	_lightingEnabled :: Bool,
 
 	-- Vertices and faces to draw
-	getMeshes :: [Mesh],
-
-	-- Textures to use
-	-- Index 0: ground texture
-	-- Index 1: wall texture
-	textures :: [String],
+	_meshes :: [Mesh],
 
 	-- Whether to use texturing
-	texturing :: Bool,
+	_texturesEnabled :: Bool,
 
 	-- Initial translation
-	getPhi      :: Float,
-	getTheta    :: Float,
-	getDistance :: Float,
+	_phi      :: Float,
+	_theta    :: Float,
+	_distance :: Float,
 
   -- Keyboard help things
-  keyboardHelpStrings :: [(String, String)],
+  _keyboardHelpStrings :: [(String, String)],
 
   -- Callback stuff
-  callbacks :: [(Char, KeyCallback)],
+  _keyCallbacks :: Map Char KeyCallback,
 
   -- Things that happen every frame
-  frameActions :: [(Char, SimulatorUpdate)],
+  _frameActions :: Map Char SimulatorUpdate,
 
   -- Key event channel
-  keyChannel :: TChan (GLFW.Key, GLFW.KeyButtonState),
+  _keyEventChannel :: TChan (GLFW.Key, GLFW.KeyButtonState),
 
   -- Textures!
-  boxTextures :: (GL.TextureObject, GL.TextureObject)
+  _environmentTextures :: (GL.TextureObject, GL.TextureObject)
   }
+makeLenses ''SimulatorData
 
 type Simulator a = StateT SimulatorData IO a 
 
@@ -162,17 +155,15 @@ initSimulatorState = do
     running = True,
     paused = False,
     ticker = ticker,
-    shouldRestartSimulation = False,
     helpOverlay = False,
-    getGlobalAxes = False,
+    showingAxes = False,
     getWireframe = False,
     getLighting = True,
     getMeshes = [],
-    textures = [],
     texturing = True,
-    getPhi      = initPhi,
-    getTheta    = initTheta,
-    getDistance = initDistance,
+    phi      = initPhi,
+    theta    = initTheta,
+    distance = initDistance,
     keyboardHelpStrings = [
       ("ESC or Q", "Exit the simulation."),
       ("W/S",      "Move closer or farther."),
@@ -185,8 +176,8 @@ initSimulatorState = do
       ("X",        "Toggle global coordinate axes."),
       ("Space",    "Reset to original camera position.")
       ],
-    callbacks = [],
-    frameActions = [],
+    callbacks = empty,
+    frameActions = empty,
     keyChannel = keyChannel,
     boxTextures = (wallTex, groundTex)
   }
@@ -219,6 +210,20 @@ initialize = do
 runSimulator :: Simulator a -> IO () 
 runSimulator action = initialize >>= runStateT action >> terminate
 
+toggle booleanLens = do
+  bool <- use booleanLens
+  booleanLens .= not bool
+
+bound numLens min max = lens getter setter
+  where getter object = object^.numLens
+        setter object newValue =
+          object^.numLens .~
+            if newValue < min
+            then min
+            else if newValue > max
+                 then max
+                 else newValue
+
 initKeys :: SimulatorUpdate
 initKeys = do
     forM_ triggers registerTrigger
@@ -226,29 +231,25 @@ initKeys = do
   where
     registerTrigger (char, updater) = registerPressed char updater
     triggers =
-      [ ('Q', modify $ \sim -> sim { running = False })
-      , ('H', modify $ \sim -> sim { helpOverlay = not $ helpOverlay sim })
-      , ('L', modify $ \sim -> sim { getLighting = not $ getLighting sim })
-      , ('X', modify $ \sim -> sim { getGlobalAxes = not $ getGlobalAxes sim })
-      , ('V', modify $ \sim -> sim { getWireframe = not $ getWireframe sim })
-      , ('T', modify $ \sim -> sim { texturing = not $ texturing sim })
-      , (' ', modify $ \sim -> sim { getPhi      = initPhi,
-                           getTheta    = initTheta,
-                           getDistance = initDistance })
+      [ ('Q', running .= False )
+      , ('H', toggle showingHelp)
+      , ('L', toggle lightingEnabled)
+      , ('X', toggle showingAxes)
+      , ('V', toggle wireframeEnabled)
+      , ('T', toggle texturesEnabled)
+      , (' ', do phi      .= initPhi
+                 theta    .= initTheta
+                 distance .= initDistance)
       ]
 
     registerHeldFunc (char, updater) = registerHeld char updater
-    bound min max newval
-      | newval < min = min
-      | newval > max = max
-      | otherwise = newval
     holds = 
-      [ ('F', modify $ \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim + rotateRate) })
-      , ('R', modify $ \sim -> sim { getTheta = bound minTheta maxTheta (getTheta sim - rotateRate) })
-      , ('D', modify $ \sim -> sim { getPhi = getPhi sim + rotateRate })
-      , ('A', modify $ \sim -> sim { getPhi = getPhi sim - rotateRate })
-      , ('S', modify $ \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim + moveRate) })
-      , ('W', modify $ \sim -> sim { getDistance = bound minDistance maxDistance (getDistance sim - moveRate) })
+      [ ('F', bound theta minTheta maxTheta += rotateRate)
+      , ('R', bound minTheta maxTheta -= rotateRate)
+      , ('D', phi += rotateRate)
+      , ('A', phi -= rotateRate)
+      , ('S', bound distance minDistance maxDistance += moveRate)
+      , ('W', bound distance minDistance maxDistance -= moveRate)
       ]
 
 initGL :: IO () 
@@ -267,24 +268,27 @@ initGL = do
         diffuse = Diffuse 1.0 1.0 1.0
 
 waitForNextFrame :: SimulatorUpdate
-waitForNextFrame = gets ticker >>= liftIO . readChan
+waitForNextFrame = use ticker >>= liftIO . readChan
 
 update :: SimulatorUpdate
 update = do
   input <- collectInput
-  actions <- map snd <$> gets frameActions
+  actions <- elems <$> use frameActions
   sequence_ actions
   forM_ input updateWithKeyPress
   where
     updateWithKeyPress (key, buttonState) = do
-      maybeCallback <- gets $ find ((== key) . GLFW.CharKey . fst) . callbacks
-      case maybeCallback of
-        Nothing -> return ()
-        Just (_, callback) -> callback buttonState 
+      callbacks <- use callbacks
+      case key of
+        GLFW.CharKey char ->
+          case lookup char callbacks of
+            Nothing -> return ()
+            Just callback -> callback buttonState 
+        _ -> return ()
 
 collectInput :: Simulator [(GLFW.Key, GLFW.KeyButtonState)]
 collectInput = do
-  chan <- gets keyChannel
+  chan <- use keyChannel
   empty <- liftIO $ atomically $ isEmptyTChan chan
   if empty then return [] else do
     thing <- liftIO $ atomically $ readTChan chan
@@ -331,18 +335,18 @@ cross (ObjectParser.Vertex x1 y1 z1) (ObjectParser.Vertex x2 y2 z2) = ObjectPars
 drawScene :: SimulatorUpdate
 drawScene = do
   -- Compute camera location based on spherical coordinates
-  distance <- gets getDistance
-  theta <- radian <$> gets getTheta
-  phi <- radian <$> gets getPhi
-  meshes <- gets getMeshes
+  distance <- use distance
+  theta <- radian <$> use theta
+  phi <- radian <$> use phi
+  meshes <- use getMeshes
   let cameraX = float2Double $ distance * sin theta * cos phi
       cameraY = float2Double $ distance * sin theta * sin phi
       cameraZ = float2Double $ distance * cos theta
       camera = Vertex (double2Float cameraX) (double2Float cameraY) (double2Float cameraZ)
 
-  globalAxes <- gets getGlobalAxes
-  lighting <- gets getLighting
-  wireframing <- gets getWireframe
+  globalAxes <- use showingAxes
+  lighting <- use getLighting
+  wireframing <- use getWireframe
 
   -- Compute "up" vector which defines camera orientation. We do this 
   -- by taking the cross product of the camera vector with the unit vector
@@ -375,7 +379,7 @@ drawOverlays =
       bold = Fonts.TimesRoman24
       textOffset = overlayBorder + borderPadding in do
 
-    showOverlay <- gets helpOverlay
+    showOverlay <- use helpOverlay
     when showOverlay $ temporarily Disabled Lighting $ do
 
       -- Allow blending for semi-transparent overview
@@ -401,7 +405,7 @@ drawOverlays =
 
       -- Overlay help text and color
       rgb 0.5 0.5 0.5
-      helpStrsWithIndices <- gets $ zip [1..] . keyboardHelpStrings
+      helpStrsWithIndices <- use $ zip [1..] . keyboardHelpStrings
       forM_ helpStrsWithIndices $ \(i, (key, helpText)) -> do
         let yLoc = textOffset + lineSpacing * i
             xLoc = textOffset
@@ -410,7 +414,7 @@ drawOverlays =
 
 drawGround :: SimulatorUpdate
 drawGround = do
-  (wallTex, groundTex) <- gets boxTextures
+  (wallTex, groundTex) <- use boxTextures
 
   -- Draw ground quad
   useTexture groundTex $ quads $ do
@@ -504,7 +508,7 @@ drawMesh mesh = do
   let verts = vertices mesh
       fs = faces mesh
       norms = vertexNormals mesh
-  wireframe <- gets getWireframe
+  wireframe <- use getWireframe
 
 	-- Apply local transformations
   localize $ do
@@ -548,10 +552,10 @@ registerHeld char updater = registerKey char callback
   where 
     callback buttonState = modify $ \sim -> sim { frameActions = newFrameActions $ frameActions sim }
       where
-        newFrameActions oldFrameActions =
+        newFrameActions =
           case buttonState of
-            GLFW.Release -> filter ((/= char) . fst) oldFrameActions
-            GLFW.Press -> (char, updater) : oldFrameActions
+            GLFW.Release -> delete char
+            GLFW.Press -> insert char updater
 
 registerPressed :: Char -> SimulatorUpdate -> SimulatorUpdate
 registerPressed char updater =
@@ -562,18 +566,10 @@ registerPressed char updater =
 
 -- Things that don't require IO
 isRunning :: Simulator Bool
-isRunning = gets running
+isRunning = use running
 
 isPaused :: Simulator Bool
-isPaused = gets paused
-
-shouldRestart :: Simulator Bool
-shouldRestart = gets shouldRestartSimulation
-
-setHasRestarted :: SimulatorUpdate
-setHasRestarted = modify $ \simulator -> simulator {
-    shouldRestartSimulation = False
-}
+isPaused = use paused
 
 addHelpText ::  String -> String -> SimulatorUpdate
 addHelpText key text = modify $ \simulator -> 
