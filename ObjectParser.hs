@@ -6,7 +6,7 @@ module ObjectParser (
   parseMesh
 ) where 
 
-import Control.Monad(liftM)
+import Control.Monad(liftM, void)
 import Data.Array(listArray, Array)
 import Data.Maybe(catMaybes)
 import Text.Parsec.Char(noneOf, oneOf, newline, char)
@@ -36,7 +36,7 @@ vertexParser :: Parser [Vertex]
 vertexParser = linesStartingWith 'v' $ do
   [x, y, z] <- count 3 $ do
     floatString <- many $ noneOf " \n"
-    many $ oneOf " \n\r"
+    void $ many $ oneOf " \n\r"
     return (read floatString)
   return $ Vertex x y z
 
@@ -44,9 +44,9 @@ faceParser :: Parser [Face]
 faceParser = linesStartingWith 'f' $ do
   vertexList <- many1 $ do
     intString <- many1 $ noneOf " \n"
-    many $ char ' '
+    void . many $ char ' '
     return (read intString)
-  many $ oneOf " \n\r"
+  void . many $ oneOf " \n\r"
   return $ case vertexList of
     [v1, v2, v3] -> Triangle v1 v2 v3
     [v1, v2, v3, v4] -> Quad v1 v2 v3 v4
@@ -55,7 +55,7 @@ faceParser = linesStartingWith 'f' $ do
 nameParser :: Parser [String]
 nameParser = linesStartingWith 'o' $ do
   nameString <- many $ noneOf "\n"
-  newline
+  void newline
   return nameString
 
 linesStartingWith :: Char -> Parser a -> Parser [a]
@@ -80,8 +80,8 @@ parseMesh filePath = do
         Left e -> error $ show e
         Right faceList -> faceList
   let name = case parse nameParser filePath fileContents of
+        Right nameStr -> head nameStr
         Left e -> error $ show e
-        Right [nameStr] -> nameStr
 
   let (vertNormals, faceNormals) = computeNormals faces vertices
 

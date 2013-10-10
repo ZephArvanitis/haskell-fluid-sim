@@ -1,10 +1,10 @@
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
 module Simulator (
   initialize,
   terminate,
   isRunning,
   isPaused,
-  shouldRestart,
-  setHasRestarted,
   update,
   draw,
   addHelpText,
@@ -21,7 +21,8 @@ module Simulator (
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.UI.GLFW as GLFW
-import Data.Array((!), elems)
+import Data.Array((!))
+import qualified Data.Array as Array
 import qualified Graphics.Rendering.OpenGL.GLU as GLU
 import Graphics.UI.GLUT.Objects (renderObject, Flavour(Solid), Object(Cone))
 import Graphics.UI.GLUT.Fonts as Fonts
@@ -39,10 +40,14 @@ import Control.Monad.State
 import ObjectParser
 import Graphics
 
-import Data.List(find)
 import GHC.Float
 import Data.Map(Map, insert, delete, elems, empty)
+import qualified Data.Map as Map
 import Control.Lens
+
+type KeyCallback = (GLFW.KeyButtonState -> SimulatorUpdate)
+type Simulator a = StateT SimulatorData IO a 
+type SimulatorUpdate = Simulator ()
 
 data SimulatorData = SimulatorData {
 	-- Main loop will exit if running becomes false.
@@ -94,8 +99,6 @@ data SimulatorData = SimulatorData {
   }
 makeLenses ''SimulatorData
 
-type Simulator a = StateT SimulatorData IO a 
-
 type Vector = ObjectParser.Vertex
 
 -- Global variables
@@ -145,26 +148,26 @@ initSimulatorState = do
   let loadTextureObject filename = do
         [texName] <- GL.genObjectNames 1
         GL.textureBinding GL.Texture2D $= Just texName
-        GLFW.loadTexture2D filename []
+        void $ GLFW.loadTexture2D filename []
         GL.textureFilter GL.Texture2D $= ((GL.Linear', Nothing), GL.Linear')
         return texName
 
   wallTex <- loadTextureObject "data/glass.tga"
   groundTex <- loadTextureObject "data/table.tga"
   return SimulatorData {
-    running = True,
-    paused = False,
-    ticker = ticker,
-    helpOverlay = False,
-    showingAxes = False,
-    getWireframe = False,
-    getLighting = True,
-    getMeshes = [],
-    texturing = True,
-    phi      = initPhi,
-    theta    = initTheta,
-    distance = initDistance,
-    keyboardHelpStrings = [
+    _running = True,
+    _paused = False,
+    _frameTicker = ticker,
+    _showingHelp = False,
+    _showingAxes = False,
+    _wireframeEnabled = False,
+    _lightingEnabled = True,
+    _meshes = [],
+    _texturesEnabled = True,
+    _phi      = initPhi,
+    _theta    = initTheta,
+    _distance = initDistance,
+    _keyboardHelpStrings = [
       ("ESC or Q", "Exit the simulation."),
       ("W/S",      "Move closer or farther."),
       ("A/D",      "Rotate around the simulation."),
@@ -176,10 +179,10 @@ initSimulatorState = do
       ("X",        "Toggle global coordinate axes."),
       ("Space",    "Reset to original camera position.")
       ],
-    callbacks = empty,
-    frameActions = empty,
-    keyChannel = keyChannel,
-    boxTextures = (wallTex, groundTex)
+    _keyCallbacks = empty,
+    _frameActions = empty,
+    _keyEventChannel = keyChannel,
+    _environmentTextures = (wallTex, groundTex)
   }
 
 width :: Integral a => a
@@ -194,7 +197,7 @@ aspectRatio = fromIntegral (width :: Integer) / fromIntegral (height :: Integer)
 initialize :: IO SimulatorData
 initialize = do
   True <- GLFW.initialize
-  GLUTInit.initialize "Simulator" []
+  void $ GLUTInit.initialize "Simulator" []
   True <- GLFW.openWindow (GL.Size width height) [
     GLFW.DisplayRGBBits 8 8 8,
     GLFW.DisplayDepthBits 16,
@@ -202,27 +205,27 @@ initialize = do
     ] GLFW.Window
   GLFW.windowTitle $= "Fluid Simulation Thingamadoop" 
   state <- initSimulatorState
-  repeatedTimer (writeChan (ticker state) ()) $ msDelay millisPerFrame
-  GLFW.keyCallback $= curry (atomically . writeTChan (keyChannel state))
+  void $ repeatedTimer (writeChan (state^.frameTicker) ()) $ msDelay millisPerFrame
+  GLFW.keyCallback $= curry (atomically . writeTChan (state^.keyEventChannel))
   initGL
   snd <$> runStateT initKeys state
 
 runSimulator :: Simulator a -> IO () 
 runSimulator action = initialize >>= runStateT action >> terminate
 
+toggle :: Lens' SimulatorData Bool -> Simulator ()
 toggle booleanLens = do
   bool <- use booleanLens
   booleanLens .= not bool
 
+bound :: Lens' SimulatorData Float -> Float -> Float -> Lens' SimulatorData Float
 bound numLens min max = lens getter setter
   where getter object = object^.numLens
-        setter object newValue =
-          object^.numLens .~
-            if newValue < min
-            then min
-            else if newValue > max
-                 then max
-                 else newValue
+        setter object newValue = numLens .~ value $ object
+          where value 
+                  | newValue < min = min
+                  | newValue > max = max
+                  | otherwise = newValue
 
 initKeys :: SimulatorUpdate
 initKeys = do
@@ -245,7 +248,7 @@ initKeys = do
     registerHeldFunc (char, updater) = registerHeld char updater
     holds = 
       [ ('F', bound theta minTheta maxTheta += rotateRate)
-      , ('R', bound minTheta maxTheta -= rotateRate)
+      , ('R', bound theta minTheta maxTheta -= rotateRate)
       , ('D', phi += rotateRate)
       , ('A', phi -= rotateRate)
       , ('S', bound distance minDistance maxDistance += moveRate)
@@ -268,7 +271,7 @@ initGL = do
         diffuse = Diffuse 1.0 1.0 1.0
 
 waitForNextFrame :: SimulatorUpdate
-waitForNextFrame = use ticker >>= liftIO . readChan
+waitForNextFrame = use frameTicker >>= liftIO . readChan
 
 update :: SimulatorUpdate
 update = do
@@ -278,25 +281,22 @@ update = do
   forM_ input updateWithKeyPress
   where
     updateWithKeyPress (key, buttonState) = do
-      callbacks <- use callbacks
+      callbacks <- use keyCallbacks
       case key of
         GLFW.CharKey char ->
-          case lookup char callbacks of
+          case Map.lookup char callbacks of
             Nothing -> return ()
             Just callback -> callback buttonState 
         _ -> return ()
 
 collectInput :: Simulator [(GLFW.Key, GLFW.KeyButtonState)]
 collectInput = do
-  chan <- use keyChannel
+  chan <- use keyEventChannel
   empty <- liftIO $ atomically $ isEmptyTChan chan
   if empty then return [] else do
     thing <- liftIO $ atomically $ readTChan chan
     things <- collectInput
     return $ thing : things
-
-type KeyCallback = (GLFW.KeyButtonState -> SimulatorUpdate)
-type SimulatorUpdate = Simulator ()
 
 draw :: SimulatorUpdate
 draw = do
@@ -338,15 +338,15 @@ drawScene = do
   distance <- use distance
   theta <- radian <$> use theta
   phi <- radian <$> use phi
-  meshes <- use getMeshes
+  meshes <- use meshes
   let cameraX = float2Double $ distance * sin theta * cos phi
       cameraY = float2Double $ distance * sin theta * sin phi
       cameraZ = float2Double $ distance * cos theta
       camera = Vertex (double2Float cameraX) (double2Float cameraY) (double2Float cameraZ)
 
   globalAxes <- use showingAxes
-  lighting <- use getLighting
-  wireframing <- use getWireframe
+  lighting <- use lightingEnabled
+  wireframing <- use wireframeEnabled
 
   -- Compute "up" vector which defines camera orientation. We do this 
   -- by taking the cross product of the camera vector with the unit vector
@@ -379,7 +379,7 @@ drawOverlays =
       bold = Fonts.TimesRoman24
       textOffset = overlayBorder + borderPadding in do
 
-    showOverlay <- use helpOverlay
+    showOverlay <- use showingHelp
     when showOverlay $ temporarily Disabled Lighting $ do
 
       -- Allow blending for semi-transparent overview
@@ -405,7 +405,8 @@ drawOverlays =
 
       -- Overlay help text and color
       rgb 0.5 0.5 0.5
-      helpStrsWithIndices <- use $ zip [1..] . keyboardHelpStrings
+
+      helpStrsWithIndices <- use $ keyboardHelpStrings.to (zip [1..])
       forM_ helpStrsWithIndices $ \(i, (key, helpText)) -> do
         let yLoc = textOffset + lineSpacing * i
             xLoc = textOffset
@@ -414,7 +415,7 @@ drawOverlays =
 
 drawGround :: SimulatorUpdate
 drawGround = do
-  (wallTex, groundTex) <- use boxTextures
+  (wallTex, groundTex) <- use environmentTextures
 
   -- Draw ground quad
   useTexture groundTex $ quads $ do
@@ -463,6 +464,7 @@ quad [(x1, y1, z1),
   vertex x3 y3 z3
   texcoord 1 0
   vertex x4 y4 z4
+quad _ = undefined
 
 -- | Draw coordinate axes and arrows in colors, without lighting.
 drawCoordinateAxes :: SimulatorUpdate
@@ -508,7 +510,7 @@ drawMesh mesh = do
   let verts = vertices mesh
       fs = faces mesh
       norms = vertexNormals mesh
-  wireframe <- use getWireframe
+  wireframe <- use wireframeEnabled
 
 	-- Apply local transformations
   localize $ do
@@ -519,7 +521,7 @@ drawMesh mesh = do
     scale (sx mesh) (sy mesh) (sz mesh) 
 
     -- Draw each face separately.
-    forM_ (elems fs) $ \face -> do
+    forM_ (Array.elems fs) $ \face -> do
       when wireframe $ rgb 1.0 1.0 1.0
       let mode = if wireframe then wires else
             case face of
@@ -542,15 +544,13 @@ terminate = GLFW.closeWindow >> GLFW.terminate
 
 -- Raw
 registerKey :: Char -> KeyCallback -> SimulatorUpdate
-registerKey char callback = modify $ \simulator -> simulator {
-  callbacks = (char, callback) : callbacks simulator
-}
+registerKey char callback = keyCallbacks %= insert char callback
 
 -- Nice
 registerHeld :: Char -> SimulatorUpdate -> SimulatorUpdate
 registerHeld char updater = registerKey char callback
   where 
-    callback buttonState = modify $ \sim -> sim { frameActions = newFrameActions $ frameActions sim }
+    callback buttonState = frameActions %= newFrameActions
       where
         newFrameActions =
           case buttonState of
@@ -572,17 +572,10 @@ isPaused :: Simulator Bool
 isPaused = use paused
 
 addHelpText ::  String -> String -> SimulatorUpdate
-addHelpText key text = modify $ \simulator -> 
-  simulator {
-    keyboardHelpStrings = keyboardHelpStrings simulator ++ [(key, text)]
-  }
-    
+addHelpText key text = keyboardHelpStrings %= ((key, text):)
+
 addMesh :: Mesh -> SimulatorUpdate
-addMesh mesh = modify $ \simulator -> simulator {
-  getMeshes = mesh : getMeshes simulator
-}
+addMesh mesh = meshes %= (mesh:)
 
 deleteMesh :: MeshName -> SimulatorUpdate
-deleteMesh meshname = modify $ \simulator -> simulator {
-  getMeshes = filter ((/= meshname) . name) $ getMeshes simulator
-}
+deleteMesh meshname = meshes %= filter ((/= meshname) . name) 
