@@ -52,14 +52,15 @@ executable fluid-simulation
   -- Other library packages from which modules are imported.
   build-depends:       base ==4.6.*,
                        OpenGL ==2.8.*,
-                       GLUT ==2.4.*,
+                       GLUT >=2.4,
                        mtl ==2.1.*,
-                       GLFW ==0.5.*,
                        array ==0.4.*,
                        stm ==2.4.*,
                        timers ==0.2.*,
                        containers ==0.5.*,
                        lens ==3.9.*,
                        parsec ==3.1.*,
-                       suspend ==0.1.*
+                       suspend ==0.1.*,
+                       JuicyPixels,
+                       vector
   

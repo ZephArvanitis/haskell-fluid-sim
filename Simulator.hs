@@ -20,13 +20,15 @@ module Simulator (
 
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.Rendering.OpenGL (($=))
-import qualified Graphics.UI.GLFW as GLFW
 import Data.Array((!))
 import qualified Data.Array as Array
 import qualified Graphics.Rendering.OpenGL.GLU as GLU
 import Graphics.UI.GLUT.Objects (renderObject, Flavour(Solid), Object(Cone))
 import Graphics.UI.GLUT.Fonts as Fonts
+import Graphics.UI.GLUT.Begin (mainLoopEvent)
 import qualified Graphics.UI.GLUT.Initialization as GLUTInit
+import qualified Graphics.UI.GLUT.Window as Window
+import qualified Graphics.UI.GLUT.Callbacks.Window as Callbacks
 import Control.Concurrent.STM.TChan
 import Control.Concurrent.STM(atomically)
 import Control.Concurrent.Chan
@@ -36,6 +38,9 @@ import Data.Int(Int64)
 import Control.Monad
 import Control.Applicative ((<$>))
 import Control.Monad.State
+import Codec.Picture
+import Data.Vector.Storable (unsafeWith)
+import System.Exit
 
 import ObjectParser
 import Graphics
@@ -45,7 +50,8 @@ import Data.Map(Map, insert, delete, elems, empty)
 import qualified Data.Map as Map
 import Control.Lens
 
-type KeyCallback = (GLFW.KeyButtonState -> SimulatorUpdate)
+data KeyButtonState = Pressed | Released deriving Show
+type KeyCallback = (KeyButtonState -> SimulatorUpdate)
 type Simulator a = StateT SimulatorData IO a 
 type SimulatorUpdate = Simulator ()
 
@@ -92,7 +98,7 @@ data SimulatorData = SimulatorData {
   _frameActions :: Map Char SimulatorUpdate,
 
   -- Key event channel
-  _keyEventChannel :: TChan (GLFW.Key, GLFW.KeyButtonState),
+  _keyEventChannel :: TChan (Char, KeyButtonState),
 
   -- Textures!
   _environmentTextures :: (GL.TextureObject, GL.TextureObject)
@@ -140,6 +146,33 @@ maxTheta = 89.5
 roomSize :: Float
 roomSize = maxDistance * 1.1
 
+loadTexture :: String -> IO ()
+loadTexture filename = do
+  eitherImage <- readImage filename
+  case eitherImage of 
+    (Left err) -> print err >> exitWith (ExitFailure 1)
+    (Right image) -> case image of 
+      (ImageRGB8 (Image width height dat)) ->
+        -- Access the data vector pointer
+        unsafeWith dat $ \ptr -> 
+          -- Generate the texture
+          GL.texImage2D
+            -- No cube map
+            Nothing
+            -- No proxy
+            GL.NoProxy
+            -- No mipmaps
+            0
+            -- Internal storage format: use R8G8B8A8 as internal storage
+            GL.RGBA8
+            -- Size of the image
+            (GL.TextureSize2D (fromIntegral width) (fromIntegral height))
+            -- No borders
+            0
+            -- The pixel data: the vector contains Bytes, in RGBA order
+            (GL.PixelData GL.RGB GL.UnsignedByte ptr)
+      _ -> error "Unknown image type"
+
 initSimulatorState :: IO SimulatorData
 initSimulatorState = do
   ticker <- newChan
@@ -148,12 +181,12 @@ initSimulatorState = do
   let loadTextureObject filename = do
         [texName] <- GL.genObjectNames 1
         GL.textureBinding GL.Texture2D $= Just texName
-        void $ GLFW.loadTexture2D filename []
+        loadTexture filename
         GL.textureFilter GL.Texture2D $= ((GL.Linear', Nothing), GL.Linear')
         return texName
 
-  wallTex <- loadTextureObject "data/glass.tga"
-  groundTex <- loadTextureObject "data/table.tga"
+  wallTex <- loadTextureObject "data/glass.png"
+  groundTex <- loadTextureObject "data/table.png"
   return SimulatorData {
     _running = True,
     _paused = False,
@@ -196,18 +229,26 @@ aspectRatio = fromIntegral (width :: Integer) / fromIntegral (height :: Integer)
 
 initialize :: IO SimulatorData
 initialize = do
-  True <- GLFW.initialize
   void $ GLUTInit.initialize "Simulator" []
-  True <- GLFW.openWindow (GL.Size width height) [
-    GLFW.DisplayRGBBits 8 8 8,
-    GLFW.DisplayDepthBits 16,
-    GLFW.DisplayAlphaBits 8
-    ] GLFW.Window
-  GLFW.windowTitle $= "Fluid Simulation Thingamadoop" 
+  GLUTInit.initialDisplayMode $= [GLUTInit.RGBMode, GLUTInit.WithDepthBuffer]
+  void $ Window.createWindow "Simulator"
+  Window.windowSize $= GL.Size width height
+  Window.windowTitle $= "Fluid Simulation Thingamadoop" 
+  Window.windowStatus $= Window.Shown
+
   state <- initSimulatorState
+  let channel = state^.keyEventChannel :: TChan (Char, KeyButtonState)
+      keyCallback direc char _ = do
+        print (direc, char)
+        atomically $ writeTChan channel (char, direc)
+      pressedCallback = keyCallback Pressed
+      releasedCallback = keyCallback Released
+  Callbacks.keyboardCallback $= Just pressedCallback
+  Callbacks.keyboardUpCallback $= Just releasedCallback
+
   void $ repeatedTimer (writeChan (state^.frameTicker) ()) $ msDelay millisPerFrame
-  GLFW.keyCallback $= curry (atomically . writeTChan (state^.keyEventChannel))
   initGL
+  putStrLn "Running simulator!"
   snd <$> runStateT initKeys state
 
 runSimulator :: Simulator a -> IO () 
@@ -234,12 +275,12 @@ initKeys = do
   where
     registerTrigger (char, updater) = registerPressed char updater
     triggers =
-      [ ('Q', running .= False )
-      , ('H', toggle showingHelp)
-      , ('L', toggle lightingEnabled)
-      , ('X', toggle showingAxes)
-      , ('V', toggle wireframeEnabled)
-      , ('T', toggle texturesEnabled)
+      [ ('q', running .= False )
+      , ('h', toggle showingHelp)
+      , ('l', toggle lightingEnabled)
+      , ('x', toggle showingAxes)
+      , ('v', toggle wireframeEnabled)
+      , ('t', toggle texturesEnabled)
       , (' ', do phi      .= initPhi
                  theta    .= initTheta
                  distance .= initDistance)
@@ -247,12 +288,12 @@ initKeys = do
 
     registerHeldFunc (char, updater) = registerHeld char updater
     holds = 
-      [ ('F', bound theta minTheta maxTheta += rotateRate)
-      , ('R', bound theta minTheta maxTheta -= rotateRate)
-      , ('D', phi += rotateRate)
-      , ('A', phi -= rotateRate)
-      , ('S', bound distance minDistance maxDistance += moveRate)
-      , ('W', bound distance minDistance maxDistance -= moveRate)
+      [ ('f', bound theta minTheta maxTheta += rotateRate)
+      , ('r', bound theta minTheta maxTheta -= rotateRate)
+      , ('d', phi += rotateRate)
+      , ('a', phi -= rotateRate)
+      , ('s', bound distance minDistance maxDistance += moveRate)
+      , ('w', bound distance minDistance maxDistance -= moveRate)
       ]
 
 initGL :: IO () 
@@ -282,14 +323,11 @@ update = do
   where
     updateWithKeyPress (key, buttonState) = do
       callbacks <- use keyCallbacks
-      case key of
-        GLFW.CharKey char ->
-          case Map.lookup char callbacks of
-            Nothing -> return ()
-            Just callback -> callback buttonState 
-        _ -> return ()
+      case Map.lookup key callbacks of
+        Nothing -> return ()
+        Just callback -> callback buttonState 
 
-collectInput :: Simulator [(GLFW.Key, GLFW.KeyButtonState)]
+collectInput :: Simulator [(Char, KeyButtonState)]
 collectInput = do
   chan <- use keyEventChannel
   empty <- liftIO $ atomically $ isEmptyTChan chan
@@ -300,6 +338,7 @@ collectInput = do
 
 draw :: SimulatorUpdate
 draw = do
+  liftIO mainLoopEvent
   liftIO $ GL.clear [GL.ColorBuffer, GL.DepthBuffer]
 
   -- Perspective or something
@@ -320,7 +359,7 @@ draw = do
   drawOverlays
 
   liftIO GL.flush
-  liftIO GLFW.swapBuffers
+  liftIO Window.swapBuffers
 
 radian ::  Floating a => a -> a
 radian degrees = pi * (degrees / 180.0)
@@ -538,7 +577,12 @@ drawMesh mesh = do
 
 
 terminate :: IO ()
-terminate = GLFW.closeWindow >> GLFW.terminate
+terminate = do
+  window <- GL.get Window.currentWindow
+  case window of
+    Nothing -> return ()
+    Just win -> 
+      void $ Window.destroyWindow win
 
 -- Key registering
 
@@ -554,15 +598,15 @@ registerHeld char updater = registerKey char callback
       where
         newFrameActions =
           case buttonState of
-            GLFW.Release -> delete char
-            GLFW.Press -> insert char updater
+            Released -> delete char
+            Pressed -> insert char updater
 
 registerPressed :: Char -> SimulatorUpdate -> SimulatorUpdate
 registerPressed char updater =
   registerKey char $ \buttonState ->
     case buttonState of
-      GLFW.Press -> updater
-      GLFW.Release -> return ()
+      Pressed -> updater
+      Released -> return ()
 
 -- Things that don't require IO
 isRunning :: Simulator Bool
