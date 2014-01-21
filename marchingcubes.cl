@@ -288,6 +288,34 @@ uchar constant triTable[256][16] = {
 };
 #undef X
 
+// Which vertices does each edge connect?
+uchar constant edgeTable[12][2] = {
+    {0, 1},
+    {1, 2},
+    {2, 3},
+    {3, 0},
+    {4, 5},
+    {5, 6},
+    {6, 7},
+    {7, 4},
+    {0, 4},
+    {1, 5},
+    {2, 6},
+    {3, 7},
+};
+
+// Get offsets for a vertex compared to some origin corner
+float3 vertLocs[8] = {
+(float3)(0, 0, 0),
+(float3)(1, 0, 0),
+(float3)(1, 1, 0),
+(float3)(0, 1, 0),
+(float3)(0, 0, 1),
+(float3)(1, 0, 1),
+(float3)(1, 1, 1),
+(float3)(0, 1, 1),
+};
+
 kernel void numVertices(global float *grid, global int *nVerts, int n) {
     int id = get_global_id(0);
     int3 gridPos = gridPosition(id, n);
@@ -316,6 +344,21 @@ kernel void numVertices(global float *grid, global int *nVerts, int n) {
     nVerts[id] = numVertsTable[cubeindex];
 }
 
+// Interpolate between two vertices based on the field values at both
+float3 vertexInterp(float field1, float field2, float3 v1, float3 v2, float isolevel) {
+    float alpha = (isolevel - field1) / (field2 - field1);
+    return alpha * v1 + (1 - alpha) * v2;
+}
+
+float3 calcNormal(float3 v1, float3 v2, float3 v3) {
+    float4 vec1, vec2;
+    vec1.xyz = v1 - v2;
+    vec2.xyz = v1 - v3;
+
+    return cross(vec1, vec2).xyz;
+
+}
+
 kernel void generateTriangles(global float *grid, global int *cubeID, 
         global int *triangleID, int n) {
     int id = cubeID[get_global_id(0)];
@@ -323,6 +366,10 @@ kernel void generateTriangles(global float *grid, global int *cubeID,
 
     int3 gridPos = gridPosition(id, n);
 
+    // Recalculate which vertices this triangle needs to connect
+    // 1. Find cube index (what kind of cube is it)
+    // 2. Find edges of the cube intersected by the triangle from triangle table
+    // 3. Find actual coordinates?
     float field[8];
     field[0] = grid[gridIndex(gridPos, n)];
     field[1] = grid[gridIndex(gridPos + (int3)(1, 0, 0), n)];
@@ -345,5 +392,16 @@ kernel void generateTriangles(global float *grid, global int *cubeID,
     if (field[7] < isolevel) cubeindex |= 128;
 
     // Figure out the edges the triangle is on
+    int e1 = triTable[cubeindex][tri * 3];
+    int e2 = triTable[cubeindex][tri * 3 + 1];
+    int e3 = triTable[cubeindex][tri * 3 + 2];
+    float3 v1 = vertexInterp(field[edgeTable[e1][0]], field[edgeTable[e1][1]], vertLocs[edgeTable[e1][0]], vertLocs[edgeTable[e1][1]]);
+    float3 v2 = vertexInterp(field[edgeTable[e2][0]], field[edgeTable[e2][1]], vertLocs[edgeTable[e2][0]], vertLocs[edgeTable[e2][1]]);
+    float3 v3 = vertexInterp(field[edgeTable[e3][0]], field[edgeTable[e3][1]], vertLocs[edgeTable[e3][0]], vertLocs[edgeTable[e3][1]]);
+    float3 faceNormal = calcNormal(v1, v2, v3);
+
+
+
+
 
 }

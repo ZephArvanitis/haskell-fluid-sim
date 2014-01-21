@@ -51,7 +51,7 @@ main = do
 
   clSetKernelArgSto kernel 0 fieldInputMem
   clSetKernelArgSto kernel 1 numVertsMem
-  clSetKernelArgSto kernel 2 (fromIntegral n :: CInt)
+  clSetKernelArgSto kernel 3 (fromIntegral n :: CInt)
 
   print "Began running"
   
