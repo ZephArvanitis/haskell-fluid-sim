@@ -25,6 +25,36 @@ uchar constant numVertsTable[256] = { 0, 3, 3, 6, 3, 6, 6, 9, 3, 6, 6, 9, 6, 9, 
     9, 6, 12, 3, 9, 12, 12, 15, 12, 15, 9, 12, 12, 15, 15, 6, 9, 12, 6, 3,
     6, 9, 9, 6, 9, 12, 6, 3, 9, 6, 12, 3, 6, 3, 3, 0, };
 
+
+kernel void numVertices(global float *grid, global int *nVerts, int n) {
+    int id = get_global_id(0);
+    int3 gridPos = gridPosition(id, n);
+
+    float field[8];
+    field[0] = grid[gridIndex(gridPos, n)];
+    field[1] = grid[gridIndex(gridPos + (int3)(1, 0, 0), n)];
+    field[2] = grid[gridIndex(gridPos + (int3)(1, 1, 0), n)];
+    field[3] = grid[gridIndex(gridPos + (int3)(0, 1, 0), n)];
+    field[4] = grid[gridIndex(gridPos + (int3)(0, 0, 1), n)];
+    field[5] = grid[gridIndex(gridPos + (int3)(1, 0, 1), n)];
+    field[6] = grid[gridIndex(gridPos + (int3)(1, 1, 1), n)];
+    field[7] = grid[gridIndex(gridPos + (int3)(0, 1, 1), n)];
+
+    uchar cubeindex = 0;
+    float isolevel = 0.1;
+    if (field[0] < isolevel) cubeindex |= 1;
+    if (field[1] < isolevel) cubeindex |= 2;
+    if (field[2] < isolevel) cubeindex |= 4;
+    if (field[3] < isolevel) cubeindex |= 8;
+    if (field[4] < isolevel) cubeindex |= 16;
+    if (field[5] < isolevel) cubeindex |= 32;
+    if (field[6] < isolevel) cubeindex |= 64;
+    if (field[7] < isolevel) cubeindex |= 128;
+
+    nVerts[id] = numVertsTable[cubeindex];
+}
+
+
 // triangle table maps same cube vertex index to a list of up to 5 triangles
 // which are built from the interpolated edge vertices
 #define X 255
@@ -305,44 +335,16 @@ uchar constant edgeTable[12][2] = {
 };
 
 // Get offsets for a vertex compared to some origin corner
-float3 vertLocs[8] = {
-(float3)(0, 0, 0),
-(float3)(1, 0, 0),
-(float3)(1, 1, 0),
-(float3)(0, 1, 0),
-(float3)(0, 0, 1),
-(float3)(1, 0, 1),
-(float3)(1, 1, 1),
-(float3)(0, 1, 1),
+float3 constant vertLocs[0] = {
+    (float3)(0.0f, 0.0f, 0.0f),
+    (float3)(1.0f, 0.0f, 0.0f),
+    (float3)(1.0f, 1.0f, 0.0f),
+    (float3)(0.0f, 1.0f, 0.0f),
+    (float3)(0.0f, 0.0f, 1.0f),
+    (float3)(1.0f, 0.0f, 1.0f),
+    (float3)(1.0f, 1.0f, 1.0f),
+    (float3)(0.0f, 1.0f, 1.0f),
 };
-
-kernel void numVertices(global float *grid, global int *nVerts, int n) {
-    int id = get_global_id(0);
-    int3 gridPos = gridPosition(id, n);
-
-    float field[8];
-    field[0] = grid[gridIndex(gridPos, n)];
-    field[1] = grid[gridIndex(gridPos + (int3)(1, 0, 0), n)];
-    field[2] = grid[gridIndex(gridPos + (int3)(1, 1, 0), n)];
-    field[3] = grid[gridIndex(gridPos + (int3)(0, 1, 0), n)];
-    field[4] = grid[gridIndex(gridPos + (int3)(0, 0, 1), n)];
-    field[5] = grid[gridIndex(gridPos + (int3)(1, 0, 1), n)];
-    field[6] = grid[gridIndex(gridPos + (int3)(1, 1, 1), n)];
-    field[7] = grid[gridIndex(gridPos + (int3)(0, 1, 1), n)];
-
-    uchar cubeindex = 0;
-    float isolevel = 0.1;
-    if (field[0] < isolevel) cubeindex |= 1;
-    if (field[1] < isolevel) cubeindex |= 2;
-    if (field[2] < isolevel) cubeindex |= 4;
-    if (field[3] < isolevel) cubeindex |= 8;
-    if (field[4] < isolevel) cubeindex |= 16;
-    if (field[5] < isolevel) cubeindex |= 32;
-    if (field[6] < isolevel) cubeindex |= 64;
-    if (field[7] < isolevel) cubeindex |= 128;
-
-    nVerts[id] = numVertsTable[cubeindex];
-}
 
 // Interpolate between two vertices based on the field values at both
 float3 vertexInterp(float field1, float field2, float3 v1, float3 v2, float isolevel) {
@@ -359,10 +361,21 @@ float3 calcNormal(float3 v1, float3 v2, float3 v3) {
 
 }
 
-kernel void generateTriangles(global float *grid, global int *cubeID, 
-        global int *triangleID, int n) {
+// n = size of grid
+kernel void generateTriangles(
+        int n,                     // size of the cube grid (one side)
+        global float *grid,        // grid of field values
+        global int *cubeID,        // which cube to operate on
+        global int *triangleID,    // which triangle within the cube to operate on
+        global int *triangleNums,  // global ids for the triangles
+        global float3 *v1s,        // output for 1st vertex of triangle
+        global float3 *v2s,        // output for 2nd vertex
+        global float3 *v3s,        // output for 3rd vertex
+        global float3 *faceNormals // output for normal vector of triangle
+        ) {
     int id = cubeID[get_global_id(0)];
     int tri = triangleID[get_global_id(0)];
+    int triangleNum = triangleNums[get_global_id(0)];
 
     int3 gridPos = gridPosition(id, n);
 
@@ -395,13 +408,23 @@ kernel void generateTriangles(global float *grid, global int *cubeID,
     int e1 = triTable[cubeindex][tri * 3];
     int e2 = triTable[cubeindex][tri * 3 + 1];
     int e3 = triTable[cubeindex][tri * 3 + 2];
-    float3 v1 = vertexInterp(field[edgeTable[e1][0]], field[edgeTable[e1][1]], vertLocs[edgeTable[e1][0]], vertLocs[edgeTable[e1][1]]);
-    float3 v2 = vertexInterp(field[edgeTable[e2][0]], field[edgeTable[e2][1]], vertLocs[edgeTable[e2][0]], vertLocs[edgeTable[e2][1]]);
-    float3 v3 = vertexInterp(field[edgeTable[e3][0]], field[edgeTable[e3][1]], vertLocs[edgeTable[e3][0]], vertLocs[edgeTable[e3][1]]);
+    float3 v1 = vertexInterp(field[edgeTable[e1][0]], 
+                             field[edgeTable[e1][1]], 
+                             vertLocs[edgeTable[e1][0]], 
+                             vertLocs[edgeTable[e1][1]], isolevel);
+    float3 v2 = vertexInterp(field[edgeTable[e2][0]], 
+                             field[edgeTable[e2][1]], 
+                             vertLocs[edgeTable[e2][0]], 
+                             vertLocs[edgeTable[e2][1]], isolevel);
+    float3 v3 = vertexInterp(field[edgeTable[e3][0]], 
+                             field[edgeTable[e3][1]], 
+                             vertLocs[edgeTable[e3][0]], 
+                             vertLocs[edgeTable[e3][1]], isolevel);
     float3 faceNormal = calcNormal(v1, v2, v3);
 
-
-
-
-
+    // Assign the outputs to communicate them to the outside world
+    v1s[triangleNum] = v1;
+    v2s[triangleNum] = v2;
+    v3s[triangleNum] = v3;
+    faceNormals[triangleNum] = faceNormal;
 }

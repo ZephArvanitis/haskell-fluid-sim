@@ -1,3 +1,4 @@
+{-# LANGUAGE ExistentialQuantification #-}
 module Main where
 
 import Control.Parallel.OpenCL  
@@ -5,8 +6,13 @@ import Foreign( castPtr, nullPtr, sizeOf )
 import Foreign.C.Types( CFloat, CInt )
 import Foreign.Ptr
 import Foreign.Marshal.Array
+import Foreign.Storable
 import Data.List( foldl' )
 import Control.Monad( forM_, forM )
+
+type CubeNum = CInt
+type TriangleNum = CInt
+type TriangleInCube = CInt
 
 main :: IO ()
 main = do
@@ -51,7 +57,7 @@ main = do
 
   clSetKernelArgSto kernel 0 fieldInputMem
   clSetKernelArgSto kernel 1 numVertsMem
-  clSetKernelArgSto kernel 3 (fromIntegral n :: CInt)
+  clSetKernelArgSto kernel 2 (fromIntegral n :: CInt)
 
   print "Began running"
   
@@ -64,13 +70,24 @@ main = do
   result <- peekArray numWorkGroups output
   print $ take 20 $ filter (>0) result
 
-
-  -- Scan though cubes and count triangles
-  -- cube #, triangle # within cube
-  let scan :: [(CInt, CInt)] -> [(CInt, CInt)]
-      scan [] = []
-      scan ((0, _):xs) = scan xs
-      scan ((result, index):xs) = (index, result `div` 3 - 1):scan ((result-3, index):xs)
-
-  let scannedthing = scan $ zip result [0..]
+  let scannedthing = scan 0 $ zip [0..] result
   print $ take 20 scannedthing
+
+-- Scan though cubes and count triangles
+scan :: TriangleNum                               -- ^ Triangle number accumulator.
+     -> [(CubeNum, TriangleInCube)]               -- ^ the cube and # of triangles in it
+     -> [(CubeNum, TriangleInCube, TriangleNum)]  -- ^ one element per triangle:
+                                                 -- cube number, which
+                                                 -- triangle in the cube,
+                                                 -- and which triangle total
+-- base case!
+scan _ [] = []
+
+-- no triangles in the cube, then ignore
+scan acc ((_, 0):xs) = scan acc xs
+
+-- if there are triangles in the cube, generate a list element
+-- and decrease the number of triangles when recursing
+scan acc ((cubeNum, triWithinCube):xs) = 
+  (cubeNum, triWithinCube `div` 3 - 1, acc) :
+  scan (acc + 1) ((cubeNum, triWithinCube - 3):xs)
