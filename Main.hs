@@ -1,8 +1,13 @@
 import Simulator
+import MarchingCubes
 import Control.Monad.State
 
 main ::  IO ()
-main = runSimulator loop
+main = do
+  mesh <- demoCube
+  runSimulator $ do
+    addMesh mesh
+    loop
 
 loop :: Simulator ()
 loop = do
