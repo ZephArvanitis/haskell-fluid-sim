@@ -238,8 +238,7 @@ initialize = do
 
   state <- initSimulatorState
   let channel = state^.keyEventChannel :: TChan (Char, KeyButtonState)
-      keyCallback direc char _ = do
-        print (direc, char)
+      keyCallback direc char _ =
         atomically $ writeTChan channel (char, direc)
       pressedCallback = keyCallback Pressed
       releasedCallback = keyCallback Released

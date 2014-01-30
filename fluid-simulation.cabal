@@ -51,6 +51,7 @@ executable fluid-simulation
   
   -- Other library packages from which modules are imported.
   build-depends:       base ==4.6.*,
+                       OpenCL >=1.0,
                        OpenGL ==2.8.*,
                        GLUT >=2.4,
                        mtl ==2.1.*,
