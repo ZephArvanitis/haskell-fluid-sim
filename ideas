@@ -1,0 +1,101 @@
+IDEAS
+
+triangle - which cube, which points within cube
+
+look at potential mergees... 
+output what it should merge with? 
+
+assign vertex numbers, then delete vertices
+
+avoiding duplicates?
+
+
+Each vertex has a thread - look at previous vertices
+
+kernel gets vertex to look at and that's it?
+  return either -1 (or its own index?) or index of the vertex it is equivalent
+  to/vertex that replaces it
+
+  Arguments:
+  - Its own index (index of the vertex in question)
+  - Index of the cube it's operating on
+  - Pass in array of cube starting positions (monotonically increasing)
+  - Array of vertices (float3s or some such nonsense)
+
+
+Each vertex looks at 4 total cubes
+Local coords:
+  two are 0 or 1, one is between 0 and 1
+pass which edge each vertex is on in its local cube?
+
+
+
+----------------------------------
+
+each thread: Compare vertex to a triangle
+- nicely gpu-able
+
+Nice way to find the four cubes we care about for each vertex?
+
+----------------------------------
+
+Arguments:
+  - Its own index (index of the vertex in question)
+  - Index of the cube it's operating on
+  - Pass in array of cube starting positions (monotonically increasing)
+  - Array of vertices (float3s or some such nonsense)
+
+Each thread looks at the pairwise equality of 
+
+-- Which cubes to check
+0  0  0
+-1 0  0
+-1 -1 0
+0 -1  0
+-1 0 -1
+0 -1 -1
+0  0 -1
+
+Kernel 1:
+  Arguments:
+    Work group: vertex index
+    - The cube indices of all vertices
+    - The starting indices (in the vert array) of all cubes
+        - can get # of tris from next cube over
+  Outputs:
+    - output how many vertices 
+
+
+-------------------------
+Args:
+  - for each vertex we get which edge its on
+  - cube indices of all vertices
+
+  get the 4 relevant cube index offsets (via a table) (including yourself)
+    and get which edge of each cube we need to look at (also via table)
+
+-----------------------------
+Kernel: removeDuplicates
+Arguments:
+  1. Edges on which the vertices lie
+  2. Cube id in which the vertices lie
+  3. For each cube id, starting index of cube's vertices
+  4. Cube indices of each cube
+
+Outputs:
+  Which vertex to replace this one with (or -1? or its own index?)
+
+How:
+  1. Use edge to get 4 relevant cube directions (new table)
+  2. Map cube directions to cube ids via addition and gridPosition.
+  3. For each of those 4:
+      - get the cube index
+      - get the edge of that cube that we care about (new table)
+      - based on cube index, get index of 1st vertex on the cube on that
+        edge, or -1 if it doesn't exist
+        (make this table out of triTable)
+      - compute total vertex index: output of table + starting index of
+        cube's vertices. if -1 in table, use the vertex's own id.
+  4. Find minimum of the existing total vertex indices. that is the output.
+ 
+ 

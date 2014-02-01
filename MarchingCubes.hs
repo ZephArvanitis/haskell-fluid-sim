@@ -1,12 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 module MarchingCubes where
 
-import Control.Parallel.OpenCL  
-import Foreign( castPtr, nullPtr, sizeOf )
-import Foreign.C.Types( CFloat, CInt )
-import Foreign.Ptr
-import Foreign.Marshal.Array
-import Foreign.Storable
 import Data.List( foldl', unzip3 )
 import Control.Monad( forM_, forM, when )
 import Control.Applicative ((<$>))

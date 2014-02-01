@@ -298,6 +298,23 @@ uchar constant edgeTable[12][2] = {
     {3, 7},
 };
 
+// Indexed by: Edge number.
+// Value:      Directions towards cubes sharing the edge.
+int3 edgeAdjacencyTable[12][4] = {
+    { (int3)(0, 0, 0) , (int3)(0, -1, 0) , (int3)(0, 0, -1) ,(int3)(0, -1, -1) },
+    { (int3)(0, 0, 0) , (int3)(1, 0, 0) ,  (int3)(0, 0, -1) ,(int3)(1, 0, -1) },
+    { (int3)(0, 0, 0) , (int3)(0, 1, 0) ,  (int3)(0, 0, -1) ,(int3)(0, 1, -1) },
+    { (int3)(0, 0, 0) , (int3)(-1, 0, 0) , (int3)(0, 0, -1) ,(int3)(-1, 0, -1) },
+    { (int3)(0, 0, 0) , (int3)(0, -1, 0) , (int3)(0, 0, 1) , (int3)(0, -1, 1) },
+    { (int3)(0, 0, 0) , (int3)(1, 0, 0) ,  (int3)(0, 0, 1) , (int3)(1, 0, 1) },
+    { (int3)(0, 0, 0) , (int3)(0, 1, 0) ,  (int3)(0, 0, 1) , (int3)(0, 1, 1) },
+    { (int3)(0, 0, 0) , (int3)(-1, 0, 0) , (int3)(0, 0, 1) , (int3)(-1, 0, 1) },
+    { (int3)(0, 0, 0) , (int3)(-1, 0, 0) , (int3)(0, -1, 0) ,(int3)(-1, -1, 0) },
+    { (int3)(0, 0, 0) , (int3)(1, 0, 0) ,  (int3)(0, -1, 0) ,(int3)(1, -1, 0) },
+    { (int3)(0, 0, 0) , (int3)(1, 0, 0) ,  (int3)(0, 1, 0) , (int3)(1, 1, 0) },
+    { (int3)(0, 0, 0) , (int3)(-1, 0, 0) , (int3)(0, 1, 0) , (int3)(-1, 1, 0) }
+};
+
 // Indexed by: Vertex number.
 // Value:      Offset (in cube widths) from vertex zero.
 int3 constant vertLocs[8] = {
