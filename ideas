@@ -97,5 +97,15 @@ How:
       - compute total vertex index: output of table + starting index of
         cube's vertices. if -1 in table, use the vertex's own id.
   4. Find minimum of the existing total vertex indices. that is the output.
- 
- 
+
+How to make table:
+  - indexed by: cube index, edge number
+  - value: smallest index (in the cube) of vertices on that edge
+
+  ex:
+	 triTable[3]: {1, 8, 3, 9, 8, 1, X, X, X, X, X, X, X, X, X, X    },
+   result[3][1] = 0
+   result[3][8] = 1
+   result[3][3] = 2
+   result[3][*] = -1 // others
+
