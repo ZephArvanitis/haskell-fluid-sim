@@ -1,12 +1,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 module MarchingCubes where
 
-import Data.List( foldl', unzip3 )
+import Data.List( foldl', unzip3, groupBy, zipWith4 )
+import Data.Function( on )
 import Control.Monad( forM_, forM, when )
 import Control.Applicative ((<$>))
 import Data.Array.MArray( newListArray )
 import Data.Array.IO( IOArray )
 import Data.Array( listArray, Array )
+import Foreign.C.Types( CInt, CFloat )
 
 import ObjectParser
 import OpenCL
@@ -86,7 +88,7 @@ demoCube = do
       -- The second element is the three vertices associated with this
       -- triangle.
       makeList cubeNum a b c = (cubeNum, [a, b, c])
-      allVertices :: [[(CubeNum, [Vertex, Vertex, Vertex])]]
+      allVertices :: [[(CubeNum, [Vertex])]]
       allVertices = groupBy ((==) `on` fst) $ zipWith4 makeList cubeNums v1s v2s v3s
 
       -- collectVerts takes allVertices and using that returns two things:
@@ -101,6 +103,8 @@ demoCube = do
           in collectVerts (start + length tris * 3) startInds' revVerts' rest
 
       (startInds, verts) = collectVerts 0 [] [] allVertices
+
+  startIndsInput <- inputBuffer cl startInds
 
   let vertices = toArray $ v1s ++ v2s ++ v3s
       mkTris a = Triangle a (a + numTris) (a + 2 * numTris)
