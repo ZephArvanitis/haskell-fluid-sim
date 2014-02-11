@@ -767,5 +767,4 @@ kernel void findDuplicateVerts(
 
     // Return this value!
     newVertexIndices[id] = minVertIndex;
-
 }
