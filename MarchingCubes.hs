@@ -79,6 +79,29 @@ demoCube = do
   v3s <-   toVerts cubeNums nC <$> out v3Out
   normals <- toVerts cubeNums nC <$> out normalsOut
 
+  let -- Convert the vertices into a single list, where each cube
+      -- gets its own element. This element is a list containing, for each
+      -- triangle, a tuple. The first element of this tuple is the cube
+      -- number. (This is constant across all elements of the inner list.)
+      -- The second element is the three vertices associated with this
+      -- triangle.
+      makeList cubeNum a b c = (cubeNum, [a, b, c])
+      allVertices :: [[(CubeNum, [Vertex, Vertex, Vertex])]]
+      allVertices = groupBy ((==) `on` fst) $ zipWith4 makeList cubeNums v1s v2s v3s
+
+      -- collectVerts takes allVertices and using that returns two things:
+      -- 1. A sparse assoc array (CubeNum, StartIndex)
+      -- 2. All the vertices in order. THE indices in the previous array
+      -- refer to the indices of the vertices in this order.
+      collectVerts _ startInds revVerts [] = (startInds, reverse revVerts)
+      collectVerts start startInds revVerts (tris:rest) =
+        let cubeId = fst $ head tris
+            startInds' = (cubeId, start):startInds
+            revVerts' = concatMap (reverse . snd) tris ++ revVerts
+          in collectVerts (start + length tris * 3) startInds' revVerts' rest
+
+      (startInds, verts) = collectVerts 0 [] [] allVertices
+
   let vertices = toArray $ v1s ++ v2s ++ v3s
       mkTris a = Triangle a (a + numTris) (a + 2 * numTris)
       faces = toArray $ map mkTris [1..numTris]

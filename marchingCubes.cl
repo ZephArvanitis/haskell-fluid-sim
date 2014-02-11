@@ -731,3 +731,41 @@ kernel void generateTriangles(
     v3s[id] = v3;
     normals[id] = normal;
 }
+
+kernel void findDuplicateVerts(
+        int n, 
+        global int *cubeId,           // Which cube contains this vertex.
+        global int *vertEdges,        // Which edge of the cube this vertex is on.
+        global int *startingVertices, // For each cube id, starting index of cube vertices.
+        global int *cubeIndices,      // Cube indices of the cubes.
+        global int *newVertexIndices  // Return value: index of replacement vertex.
+        ) {
+    // Get relevant cube directions based on the edge this vertex is on.
+    int id = get_global_id(0);
+    int cube = cubeId[id];
+    int edge = vertEdges[id];
+
+    int4 cubeDirections[4] = edgeAdjacencyTable[edge];
+    int3 cubePosition = gridPosition(cube, n);
+
+    int minVertIndex = id;
+    for (int i = 0; i < 4; i++) {
+        // Use cube directions to get cube ID and relevant edge of the neighbor 
+        // in question.
+        int neighborId = gridIndex(cubePosition + cubeDirections[i].xyz, n);
+        int neighborIndex = cubeIndices[neighborId];
+        // Calculate vertex index locally for the cube and then globally in
+        // the list of verts.
+        int neighborEdge = cubeDirections[i].w;
+        int firstVertexIndex = vertexIndexTable[neighborIndex][neighborEdge];
+        // Reset minimum vert index if relevant.
+        if (firstVertexIndex >= 0) {
+            int totalVertexIndex = firstVertexIndex + startingVertices[neighborId];
+            minVertIndex = min(minVertIndex, totalVertexIndex);
+        }
+    }
+
+    // Return this value!
+    newVertexIndices[id] = minVertIndex;
+
+}
