@@ -7,7 +7,7 @@ import Control.Monad( forM_, forM, when )
 import Control.Applicative ((<$>))
 import Data.Array.MArray( newListArray )
 import Data.Array.IO( IOArray )
-import Data.Array( listArray, Array )
+import Data.Array( listArray, Array, array )
 import Foreign.C.Types( CInt, CFloat )
 
 import ObjectParser
@@ -87,24 +87,36 @@ demoCube = do
       -- number. (This is constant across all elements of the inner list.)
       -- The second element is the three vertices associated with this
       -- triangle.
-      makeList cubeNum a b c = (cubeNum, [a, b, c])
-      allVertices :: [[(CubeNum, [Vertex])]]
-      allVertices = groupBy ((==) `on` fst) $ zipWith4 makeList cubeNums v1s v2s v3s
+      makeList cubeNum a b c = [(cubeNum, a), (cubeNum, b), (cubeNum, b)]
+      allVertices = concat $ zipWith4 makeList cubeNums v1s v2s v3s
 
-      -- collectVerts takes allVertices and using that returns two things:
-      -- 1. A sparse assoc array (CubeNum, StartIndex)
-      -- 2. All the vertices in order. THE indices in the previous array
-      -- refer to the indices of the vertices in this order.
-      collectVerts _ startInds revVerts [] = (startInds, reverse revVerts)
-      collectVerts start startInds revVerts (tris:rest) =
-        let cubeId = fst $ head tris
-            startInds' = (cubeId, start):startInds
-            revVerts' = concatMap (reverse . snd) tris ++ revVerts
-          in collectVerts (start + length tris * 3) startInds' revVerts' rest
+      vertsByCube = groupBy ((==) `on` fst) allVertices
+      folder (prevNumVerts, prevCubes) vertsInCube =
+        let cubeNum = fst (head vertsInCube) in
+          (prevNumVerts + length vertsInCube, (cubeNum, prevNumVerts):prevCubes)
 
-      (startInds, verts) = collectVerts 0 [] [] allVertices
+      cubeNumStarts :: [(CubeNum, Int)]
+      cubeNumStarts = reverse . snd $ foldl' folder (0, []) vertsByCube
 
-  startIndsInput <- inputBuffer cl startInds
+      -- base case
+      fixCubeNums acc [] = reverse acc
+
+      -- starting case
+      fixCubeNums [] cubes@((cubeNum, start):rest) = 
+        if cubeNum == 0
+        then fixCubeNums [(cubeNum, start)] rest
+        else fixCubeNums [(0, 0)] cubes
+
+      -- normal case
+      fixCubeNums accum@((prevCube, _):acc) cubes@((nextCube, nextStart):rest) = 
+        if prevCube + 1 == nextCube
+        then fixCubeNums ((nextCube, nextStart):accum) rest
+        else fixCubeNums ((prevCube+1, nextStart):accum) cubes
+
+      allCubeNumStarts :: [CInt]
+      allCubeNumStarts = map (fromIntegral . snd) $ fixCubeNums [] cubeNumStarts
+
+  cubeNumStartInput <- inputBuffer cl allCubeNumStarts
 
   let vertices = toArray $ v1s ++ v2s ++ v3s
       mkTris a = Triangle a (a + numTris) (a + 2 * numTris)
