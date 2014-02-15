@@ -42,28 +42,73 @@ demoCube = do
   -- Initialize OpenCL and load our kernels.
   cl <- initializeOpenCL
   let filename = "marchingCubes.cl"
-      kernels = ["numVertices", "generateTriangles"]
-  [nvertsKernel, triKernel] <- sourceKernels cl filename kernels
+      kernels = ["numVertices", "generateTriangles", "findDuplicateVerts", "vertexPositions"]
+  [nvertsKernel, triKernel, dupVertsKernel, positionsKernel] <- sourceKernels cl filename kernels
 
   -- Allocate space for input and output
   let nCubes = n^3
   grid <- inputBuffer cl values
   nverts <- outputBuffer cl nCubes :: IO (OutputBuffer CInt)
-  setKernelArgs nvertsKernel nC grid nverts
+  cubeIndices <- outputBuffer cl nCubes :: IO (OutputBuffer CInt)
+  setKernelArgs nvertsKernel nC grid nverts cubeIndices
 
   -- Execute first kernel to get number of triangles in each cube
   nvertsOut <- runKernel cl nvertsKernel [nCubes] [1]
   nvertsList <- readKernelOutput cl nvertsOut nverts
+  cubeIndicesList <- readKernelOutput cl nvertsOut cubeIndices
   
   -- Do a scan through the result to create a list with one element per
   -- thread in the next step
-  let (cubeNums, triNums) = unzip . scan $ zip [0..] nvertsList
+  let (cubeIds, cubeInds, vertIds) = unzip . scan $ zip3 [0..] cubeIndicesList nvertsList
 
-  -- Set up memory for input/output things 
+  -- Setting up for genVerts
+  let numVerts = length vertIds
+  cubeIdInput <- inputBuffer cl cubeIds
+  cubeIndInput <- inputBuffer cl cubeInds
+  vertIdInput <- inputBuffer cl vertIds
+  startingVertInput <- inputBuffer cl magicResult
+  globalVertInds <- outputBuffer cl numVerts :: IO (OutputBuffer CInt)
+
+  -- Generate vertices
+  setKernelArgs genVerts nC cubeIdInput cubeIndInput vertIdInput startingVertInput globalVertInds
+  genVertsOut <- runKernel cl genVerts [numVerts] [1]
+
+  -- Rename vertices to one through k (k = length of unique vertices)
+  vertArray <- toMArray <$> readKernelOutput cl genVertsOut globalVertInds
+  let loop ind counter backwardsAccum = do
+        (_, len) <- getBounds vertArray
+        if ind > len
+        then return $ reverse backwardsAccum
+        else do
+          value <- readArray vertArray ind
+          if value == ind
+          then do
+            writeArray vertArray ind counter
+            loop (ind + 1) (counter + 1) (value:backwardsAccum)
+          else
+            readArray vertArray value >>= writeArray vertArray ind
+            loop (ind + 1) counter backwardsAccum
+
+  -- oh gods im so sorry im sorry im sorry
+  previousGlobalIndices <- loop 1 0 [] :: IO [CInt]
+
+  let maxVertInd = maximum $ elems renamedVerts
+      uniqueVertInds = [0..maxVertInd]
+
+  -- Generate vertex positions!!!
+  let numUniqueVerts = maxVertInd + 1
+  globalVertIds <- inputBuffer cl previousGlobalIndices
+  vertPosOut <- outputBuffer cl (numUniqueVerts * 4) :: IO (OutputBuffer CFloat)
+
+  -- Generate vertices
+  setKernelArgs vertexPositions nC grid globalVertsIds cubeIdInput cubeIndInput vertIdInput vertPosOut
+  vertexPositionsOut <- runKernel cl vertexPositions [numUniqueVerts] [1]
+
+
+        
+
+  {--- Setting up for calling generateTriangles
   let numTris = length cubeNums
-      numFloats = numTris * 4
-
-  -- fieldInputMem (grid values) already exists
   cubeInput <- inputBuffer cl cubeNums
   triInput  <- inputBuffer cl triNums
   v1Out <- outputBuffer cl numFloats :: IO (OutputBuffer CFloat)
@@ -79,7 +124,7 @@ demoCube = do
   v1s <-   toVerts cubeNums nC <$> out v1Out
   v2s <-   toVerts cubeNums nC <$> out v2Out
   v3s <-   toVerts cubeNums nC <$> out v3Out
-  normals <- toVerts cubeNums nC <$> out normalsOut
+  normals <- toVerts cubeNums nC <$> out normalsOut-}
 
   let -- Convert the vertices into a single list, where each cube
       -- gets its own element. This element is a list containing, for each

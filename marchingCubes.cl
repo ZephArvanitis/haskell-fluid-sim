@@ -676,7 +676,8 @@ static float3 vertex(float* field, int edge) {
 // For each cube, this will store a multiple of three, e.g. 3 vertices means one triangle.
 kernel void numVertices(int n,                     // Size of the grid on a side, in cubes.
                         global float *grid,        // Field values on the grid.
-                        global int *numVerts       // Output: number of vertices each cube will output.
+                        global int *numVerts,      // Output: number of vertices each cube will output.
+                        global int *cubeIndices    // Output: cube index of each output cube.
                        ) {
     // Compute the cube index.
     int id = get_global_id(0);
@@ -687,63 +688,44 @@ kernel void numVertices(int n,                     // Size of the grid on a side
 
     // Write output.
     numVerts[id] = numVertsTable[index];
+    cubeIndices[id] = index;
 }
 
 // Compute vertex locations and face normal for each triangle.
 // Each work group handles a single triangle.
-kernel void generateTriangles(
-        int n,                     // Size of the grid on a side, in cubes.
-        global float *grid,        // Field values on the grid.
-        global int *cubeId,        // Which cube to operate on.
+/*kernel void generateTriangles(
+        global int *cubeIndices,   // Which cube to operate on.
         global int *triangleId,    // Which triangle in this cube to operate on (0 through 15).
-        global float3 *v1s,        // Output: First  vertex of resulting triangle.
-        global float3 *v2s,        // Output: Second vertex of resulting triangle.
-        global float3 *v3s,        // Output: Third  vertex of resulting triangle.
-        global float3 *normals     // Output: Face normal for the resulting triangle (normalized).
+        global int *e1s,           // Output: First  edge number in the resulting triangle.
+        global int *e2s,           // Output: Second edge number in the resulting triangle.
+        global int *e3s            // Output: Third  edge number in the resulting triangle.
         ) {
+
     int id = get_global_id(0);
-
-    int cube = cubeId[id];
     int tri  = triangleId[id];
-
-    // Recalculate the cube index.
-    float field[8];
-    int3 position = gridPosition(cube, n);
-    fieldValues(grid, n, position, field);
-    uchar index = cubeIndex(field);
+    uchar index = cubeIndices[id]; 
 
     // Figure out the edges the triangle is on.
-    int e1 = triTable[index][tri * 3];
-    int e2 = triTable[index][tri * 3 + 1];
-    int e3 = triTable[index][tri * 3 + 2];
+    e1s[id] = triTable[index][tri * 3];
+    e2s[id] = triTable[index][tri * 3 + 1];
+    e3s[id] = triTable[index][tri * 3 + 2];
+}*/
 
-    // Compute the vertices for the triangle.
-    float3 v1 = vertex(field, e1);
-    float3 v2 = vertex(field, e2);
-    float3 v3 = vertex(field, e3);
-
-    // Compute the triangle face normal.
-    float3 normal = getNormal(v1, v2, v3);
-
-    // Write outputs.
-    v1s[id] = v1;
-    v2s[id] = v2;
-    v3s[id] = v3;
-    normals[id] = normal;
-}
-
-kernel void findDuplicateVerts(
+kernel void genVerts(
         int n, 
         global int *cubeId,           // Which cube contains this vertex.
-        global int *vertEdges,        // Which edge of the cube this vertex is on.
-        global int *startingVertices, // For each cube id, starting index of cube vertices.
         global int *cubeIndices,      // Cube indices of the cubes.
+        global int *vertId,           // Which vertex in the cube this is (of the possible 15)
+        global int *startingVertices, // For each cube id, starting index of cube vertices.
         global int *newVertexIndices  // Return value: index of replacement vertex.
         ) {
     // Get relevant cube directions based on the edge this vertex is on.
     int id = get_global_id(0);
     int cube = cubeId[id];
-    int edge = vertEdges[id];
+    int vert = vertId[id];
+
+    uchar index = cubeIndices[id]; 
+    int edge = triTable[index][vert];
 
     int3 cubePosition = gridPosition(cube, n);
 
@@ -767,4 +749,30 @@ kernel void findDuplicateVerts(
 
     // Return this value!
     newVertexIndices[id] = minVertIndex;
+}
+
+kernel void vertexPositions(
+        int n,                  // Size of the grid
+        global float *grid,     // Grid field values
+        global int *globalVertId, // Which vertex this is globally
+        global int *cubeId,     // Which cube contains this vertex.
+        global int *cubeIndices,// Cube indices of the cubes.
+        global int *vertId,     // Which vertex in the cube this is (of the possible 15)
+        global float3 *pos      // Output: position of the vertex.
+        ) {
+    int id = globalVertId[get_global_id(0)];
+    int cube = cubeId[id];
+    int vert = vertId[id];
+    uchar index = cubeIndices[id]; 
+    int edge = triTable[index][vert];
+
+    float field[8];
+    int3 position = gridPosition(cube, n);
+    fieldValues(grid, n, position, field);
+
+    float3 loc = vertex(field, edge);
+    loc.x += position.x;
+    loc.y += position.y;
+    loc.z += position.z;
+    pos[id] = loc;
 }
