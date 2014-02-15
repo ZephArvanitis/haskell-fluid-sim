@@ -103,8 +103,8 @@ computeNormals faces vertices = (vertexNormals, faceNormals)
     faceNormals = map (makeFaceNormal vertices) faces
     vertexNormals = map (makeVertexNormal faceNormals) [1..length vertices]
 
-    makeFaceNormal vertices (Triangle a b c) = faceNormalFor (vertices !! a) (vertices !! b) (vertices !! c)
-    makeFaceNormal vertices (Quad a b c _) = faceNormalFor (vertices !! a) (vertices !! b) (vertices !! c)
+    makeFaceNormal vertices (Triangle a b c) = faceNormalFor (vertices !! (a - 1)) (vertices !! (b - 1)) (vertices !! (c - 1))
+    makeFaceNormal vertices (Quad a b c _) = faceNormalFor (vertices !! (a - 1)) (vertices !! (b - 1)) (vertices !! (c - 1))
     faceNormalFor v1 v2 v3 =
       let x1 = x v1 - x v2
           y1 = y v1 - y v2

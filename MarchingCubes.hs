@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 module MarchingCubes where
 
-import Data.List( foldl', unzip3, groupBy, zipWith4, zip3 )
+import Data.List( foldl', unzip3, groupBy, zipWith4, zip3, nub, sort )
 import Data.List.Split
 import Data.Function( on )
 import Control.Monad( forM_, forM, when )
@@ -32,12 +32,12 @@ demoCube :: IO Mesh
 demoCube = do
   
   -- Initialize the field values for a sphere.
-  let n = 40
+  let n = 10
       nC = fromIntegral n :: CInt
-      radius = 20
+      radius = 4
       indices = map (gridPosition $ n + 1) [0..(n+1)^3-1]
       value = sphereValue n radius
-      -- value = planeValue 0.9
+      --value = planeValue 0.9
       values = map value indices :: [CFloat]
 
   -- Initialize OpenCL and load our kernels.
@@ -70,15 +70,13 @@ demoCube = do
           id:more -> 
             case compare id next of
               GT -> ind:countStarts (id:more) (next + 1) ind
-
               EQ -> ind:countStarts more (next + 1) (ind + 1)
               LT -> countStarts more next (ind + 1)
-
 
   -- Setting up for genVerts
   let numVerts = length vertIds
   cubeIdInput <- inputBuffer cl cubeIds
-  cubeIndInput <- inputBuffer cl cubeInds
+  cubeIndInput <- inputBuffer cl cubeIndicesList
   vertIdInput <- inputBuffer cl vertIds
   startingVertInput <- inputBuffer cl startingIndices
   globalVertInds <- outputBuffer cl numVerts :: IO (OutputBuffer CInt)
@@ -96,23 +94,22 @@ demoCube = do
         then return $ reverse backwardsAccum
         else do
           value <- readArray vertArray ind
-          if value == fromIntegral ind
+          if value + 1 == fromIntegral ind
           then do
             writeArray vertArray ind counter
             loop (ind + 1) (counter + 1) (value:backwardsAccum)
           else do
-            readArray vertArray (fromIntegral value) >>= writeArray vertArray ind
+            readArray vertArray (fromIntegral value + 1) >>= writeArray vertArray ind
             loop (ind + 1) counter backwardsAccum
 
   -- oh gods im so sorry im sorry im sorry
-  previousGlobalIndices <- loop 1 0 [] :: IO [CInt]
+  previousGlobalIndices <- loop 1 1 [] :: IO [CInt]
   renamedVerts <- freeze vertArray
 
   let maxVertInd = maximum $ elems renamedVerts
-      uniqueVertInds = [0..maxVertInd]
 
   -- Generate vertex positions!!!
-  let numUniqueVerts = fromIntegral $ maxVertInd + 1
+  let numUniqueVerts = fromIntegral maxVertInd
   globalVertIds <- inputBuffer cl previousGlobalIndices
   vertPosOut <- outputBuffer cl (numUniqueVerts * 4) :: IO (OutputBuffer CFloat)
 
@@ -126,12 +123,14 @@ demoCube = do
       vertices = map toVert $ chunksOf 4 positions
       toTri [v1, v2, v3] = Triangle (fromIntegral v1) (fromIntegral v2) (fromIntegral v3)
       faces = map toTri $ chunksOf 3 $ elems renamedVerts
+  print numVerts
+  print $ length vertices
 
   -- Get face normals
   let (vertexNormals, faceNormals) = computeNormals faces vertices
 
   -- Create the mesh from these results
-  let scale = 0.005
+  let scale = 0.1
   let mesh = Mesh{ vertices = toArray vertices
                  , faces = toArray faces
                  , faceNormals = toArray faceNormals
@@ -174,82 +173,7 @@ gridPosition n num = (x, y, z) where
 -- for each such tuple, we output `count` number of tuples,
 -- (thing, 0), (thing, 1), ..., (thing, count - 1)
 scan :: [(a, CInt)] -> [(a, CInt)]
-
--- base case!
-scan [] = []
-
--- no triangles in the cube, then ignore
-scan ((_, 0):xs) = scan xs
-
--- if there are triangles in the cube, generate a list element
--- and decrease the number of triangles when recursing
-scan ((thing, count):xs) = 
-  (thing, count - 1) :
-  scan ((thing, count - 1):xs)
-
-  --
-  
-
-  {--- Setting up for calling generateTriangles
-  let numTris = length cubeNums
-  cubeInput <- inputBuffer cl cubeNums
-  triInput  <- inputBuffer cl triNums
-  v1Out <- outputBuffer cl numFloats :: IO (OutputBuffer CFloat)
-  v2Out <- outputBuffer cl numFloats :: IO (OutputBuffer CFloat)
-  v3Out <- outputBuffer cl numFloats :: IO (OutputBuffer CFloat)
-  normalsOut <- outputBuffer cl numFloats :: IO (OutputBuffer CFloat)
-
-  -- Create/initialize the kernel
-  setKernelArgs triKernel nC grid cubeInput triInput v1Out v2Out v3Out normalsOut
-  triOut <- runKernel cl triKernel [numTris] [1]
-
-  let out = readKernelOutput cl triOut
-  v1s <-   toVerts cubeNums nC <$> out v1Out
-  v2s <-   toVerts cubeNums nC <$> out v2Out
-  v3s <-   toVerts cubeNums nC <$> out v3Out
-  normals <- toVerts cubeNums nC <$> out normalsOut
-
-  let -- Convert the vertices into a single list, where each cube
-      -- gets its own element. This element is a list containing, for each
-      -- triangle, a tuple. The first element of this tuple is the cube
-      -- number. (This is constant across all elements of the inner list.)
-      -- The second element is the three vertices associated with this
-      -- triangle.
-      makeList cubeNum a b c = [(cubeNum, a), (cubeNum, b), (cubeNum, b)]
-      allVertices = concat $ zipWith4 makeList cubeNums v1s v2s v3s
-
-      vertsByCube = groupBy ((==) `on` fst) allVertices
-      folder (prevNumVerts, prevCubes) vertsInCube =
-        let cubeNum = fst (head vertsInCube) in
-          (prevNumVerts + length vertsInCube, (cubeNum, prevNumVerts):prevCubes)
-
-      cubeNumStarts :: [(CubeNum, Int)]
-      cubeNumStarts = reverse . snd $ foldl' folder (0, []) vertsByCube
-
-      -- base case
-      fixCubeNums acc [] = reverse acc
-
-      -- starting case
-      fixCubeNums [] cubes@((cubeNum, start):rest) = 
-        if cubeNum == 0
-        then fixCubeNums [(cubeNum, start)] rest
-        else fixCubeNums [(0, 0)] cubes
-
-      -- normal case
-      fixCubeNums accum@((prevCube, _):acc) cubes@((nextCube, nextStart):rest) = 
-        if prevCube + 1 == nextCube
-        then fixCubeNums ((nextCube, nextStart):accum) rest
-        else fixCubeNums ((prevCube+1, nextStart):accum) cubes
-
-      allCubeNumStarts :: [CInt]
-      allCubeNumStarts = map (fromIntegral . snd) $ fixCubeNums [] cubeNumStarts
-
-  cubeNumStartInput <- inputBuffer cl allCubeNumStarts
-  
-
-  let vertices = toArray $ v1s ++ v2s ++ v3s
-      mkTris a = Triangle a (a + numTris) (a + 2 * numTris)
-      faces = toArray $ map mkTris [1..numTris]
-      faceNormals = toArray normals
-      vertexNormals = toArray . concat . replicate 3 $ normals
-  -}
+scan things = case things of
+  [] -> []
+  ((_, 0):xs) -> scan xs
+  ((thing, n):xs) -> zip (replicate (fromIntegral n) thing) [0..n-1] ++ scan xs

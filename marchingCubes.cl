@@ -672,6 +672,12 @@ static float3 vertex(float* field, int edge) {
     return vertexInterp(field1, field2, vert1, vert2);
 }
 
+// Check if a given position exists in the grid.
+static bool positionExists(int3 position, int n) {
+    return position.x >= 0 && position.y >= 0 && position.z >= 0 &&
+           position.x < n && position.y < n && position.z < n;
+}
+
 // Compute the number of vertices that each cube will output.
 // For each cube, this will store a multiple of three, e.g. 3 vertices means one triangle.
 kernel void numVertices(int n,                     // Size of the grid on a side, in cubes.
@@ -691,30 +697,10 @@ kernel void numVertices(int n,                     // Size of the grid on a side
     cubeIndices[id] = index;
 }
 
-// Compute vertex locations and face normal for each triangle.
-// Each work group handles a single triangle.
-/*kernel void generateTriangles(
-        global int *cubeIndices,   // Which cube to operate on.
-        global int *triangleId,    // Which triangle in this cube to operate on (0 through 15).
-        global int *e1s,           // Output: First  edge number in the resulting triangle.
-        global int *e2s,           // Output: Second edge number in the resulting triangle.
-        global int *e3s            // Output: Third  edge number in the resulting triangle.
-        ) {
-
-    int id = get_global_id(0);
-    int tri  = triangleId[id];
-    uchar index = cubeIndices[id]; 
-
-    // Figure out the edges the triangle is on.
-    e1s[id] = triTable[index][tri * 3];
-    e2s[id] = triTable[index][tri * 3 + 1];
-    e3s[id] = triTable[index][tri * 3 + 2];
-}*/
-
 kernel void genVerts(
         int n, 
         global int *cubeId,           // Which cube contains this vertex.
-        global int *cubeIndices,      // Cube indices of the cubes.
+        global int *cubeIndices,      // Cube indices of the cubes; indexed by cube id.
         global int *vertId,           // Which vertex in the cube this is (of the possible 15)
         global int *startingVertices, // For each cube id, starting index of cube vertices.
         global int *newVertexIndices  // Return value: index of replacement vertex.
@@ -724,28 +710,33 @@ kernel void genVerts(
     int cube = cubeId[id];
     int vert = vertId[id];
 
-    uchar index = cubeIndices[id]; 
+    uchar index = cubeIndices[cube]; 
     int edge = triTable[index][vert];
 
     int3 cubePosition = gridPosition(cube, n);
 
     int minVertIndex = id;
+    
     for (int i = 0; i < 4; i++) {
         int4 cubeDirection = edgeAdjacencyTable[edge][i];
         // Use cube directions to get cube ID and relevant edge of the neighbor 
         // in question.
-        int neighborId = gridIndex(cubePosition + cubeDirection.xyz, n);
-        int neighborIndex = cubeIndices[neighborId];
-        // Calculate vertex index locally for the cube and then globally in
-        // the list of verts.
-        int neighborEdge = cubeDirection.w;
-        int firstVertexIndex = vertexIndexTable[neighborIndex][neighborEdge];
-        // Reset minimum vert index if relevant.
-        if (firstVertexIndex >= 0) {
-            int totalVertexIndex = firstVertexIndex + startingVertices[neighborId];
-            minVertIndex = min(minVertIndex, totalVertexIndex);
+        int3 neighborPos = cubePosition + cubeDirection.xyz;
+        if (positionExists(neighborPos, n)) {
+            int neighborId = gridIndex(neighborPos, n);
+            int neighborIndex = cubeIndices[neighborId];
+            // Calculate vertex index locally for the cube and then globally in
+            // the list of verts.
+            int neighborEdge = cubeDirection.w;
+            int firstVertexIndex = vertexIndexTable[neighborIndex][neighborEdge];
+            // Reset minimum vert index if relevant.
+            if (firstVertexIndex >= 0) {
+                int totalVertexIndex = firstVertexIndex + startingVertices[neighborId];
+                minVertIndex = min(minVertIndex, totalVertexIndex);
+            }
         }
     }
+    
 
     // Return this value!
     newVertexIndices[id] = minVertIndex;
@@ -756,14 +747,15 @@ kernel void vertexPositions(
         global float *grid,     // Grid field values
         global int *globalVertId, // Which vertex this is globally
         global int *cubeId,     // Which cube contains this vertex.
-        global int *cubeIndices,// Cube indices of the cubes.
+        global int *cubeIndices,// Cube indices of the cubes, indexed by cube id.
         global int *vertId,     // Which vertex in the cube this is (of the possible 15)
         global float3 *pos      // Output: position of the vertex.
         ) {
     int id = globalVertId[get_global_id(0)];
     int cube = cubeId[id];
     int vert = vertId[id];
-    uchar index = cubeIndices[id]; 
+
+    uchar index = cubeIndices[cube]; 
     int edge = triTable[index][vert];
 
     float field[8];
@@ -774,5 +766,5 @@ kernel void vertexPositions(
     loc.x += position.x;
     loc.y += position.y;
     loc.z += position.z;
-    pos[id] = loc;
+    pos[get_global_id(0)] = loc;
 }

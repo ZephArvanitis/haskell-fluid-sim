@@ -311,4 +311,5 @@ def print_offset_dirs():
       print x, ",",
     print "},"
 
-print_tri_table_things()
+#print_tri_table_things()
+print TRI_TABLE[240]
