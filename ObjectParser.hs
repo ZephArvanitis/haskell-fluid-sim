@@ -3,7 +3,8 @@ module ObjectParser (
   Vertex(..),
   Face(..),
   MeshName,
-  parseMesh
+  parseMesh,
+  computeNormals
 ) where 
 
 import Control.Monad(liftM, void)
