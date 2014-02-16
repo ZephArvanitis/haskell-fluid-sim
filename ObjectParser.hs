@@ -113,7 +113,7 @@ computeNormals faces vertices = (vertexNormals, faceNormals)
           x2 = x v1 - x v3
           y2 = y v1 - y v3
           z2 = z v1 - z v3 in
-        cross (Vertex x1 y1 z1) (Vertex x2 y2 z2)
+        cross (Vertex x2 y2 z2) (Vertex x1 y1 z1) 
 
     makeVertexNormal faceNormals index = 
       let faceHasInd (Quad a b c d) =  (`elem` [a, b, c, d])
