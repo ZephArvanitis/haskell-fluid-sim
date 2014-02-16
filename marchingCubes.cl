@@ -697,39 +697,55 @@ kernel void numVertices(int n,                     // Size of the grid on a side
     cubeIndices[id] = index;
 }
 
-kernel void genVerts(
-        int n, 
-        global int *cubeId,           // Which cube contains this vertex.
-        global int *cubeIndices,      // Cube indices of the cubes; indexed by cube id.
-        global int *vertId,           // Which vertex in the cube this is (of the possible 15)
-        global int *startingVertices, // For each cube id, starting index of cube vertices.
-        global int *newVertexIndices  // Return value: index of replacement vertex.
-        ) {
-    // Get relevant cube directions based on the edge this vertex is on.
-    int id = get_global_id(0);
-    int cube = cubeId[id];
-    int vert = vertId[id];
 
-    uchar index = cubeIndices[cube]; 
-    int edge = triTable[index][vert];
+// For each triangle corner, choose which vertex to use. For triangle corners
+// that are shared with other triangles, the vertex generated will be the same.
+// This ensures that we generate a minimum number of vertices and can properly
+// compute vertex normals later. To specify a vertex, the output is the array
+// of integers representing the vertex, such that the repeated vertices are
+// represented by the same integer in all instances.
+kernel void genVerts(
+        int n,                        // Size of the square grid. 
+        global int *cubeId,           // Which cube contains this vertex (indexed per vertex).
+        global int *cubeIndices,      // Cube indices of the cubes (indexed by cube id).
+        global int *vertId,           // Which vertex in the cube this is of possible 15 (indexed by vertex)
+        global int *startingVertices, // Starting index of cube vertices (indexed by cube id).
+        global int *newVertexIndices  // Return value: index of replacement vertex (indexed by vertex).
+        ) {
+    int id = get_global_id(0);
+    int cube = cubeId[id];            // Cube id for this vertex
+    int vert = vertId[id];            // Relative vertex number inside cube
+    uchar index = cubeIndices[cube];  // Cube index for the cube containing this vertex
+    int edge = triTable[index][vert]; // Edge on which this vertex lies
 
     int3 cubePosition = gridPosition(cube, n);
 
+    // Loop over cubes that neighbor this edge, including the host cube of the vertex.
+    // Compute the minimum vertex index that lies on this edge. Since the vertex we're looking
+    // at lies on this edge, its own id is a valid candidate, so we initialize the minimum
+    // counter to its own id.
     int minVertIndex = id;
-    
     for (int i = 0; i < 4; i++) {
+        // Get the location of the neighbor we're looking at.
         int4 cubeDirection = edgeAdjacencyTable[edge][i];
-        // Use cube directions to get cube ID and relevant edge of the neighbor 
-        // in question.
         int3 neighborPos = cubePosition + cubeDirection.xyz;
+
+        // Check that the neighbor actually exists.
         if (positionExists(neighborPos, n)) {
+            // If the neighbor exists, get its cube id and cube index.
             int neighborId = gridIndex(neighborPos, n);
             int neighborIndex = cubeIndices[neighborId];
-            // Calculate vertex index locally for the cube and then globally in
-            // the list of verts.
+
+            // Find which edge in the neighboring cube this vertex lies on.
             int neighborEdge = cubeDirection.w;
+
+            // Lookup the first vertex in the neighbor cube which lies on that edge.
+            // This is -1 if there is no vertex on that edge. 
             int firstVertexIndex = vertexIndexTable[neighborIndex][neighborEdge];
-            // Reset minimum vert index if relevant.
+
+            // If we've found a smaller vertex index, then use that instead of the current one.
+            // Note that this can be less than id even if we're looking at the host cube, because
+            // the host cube could contain multiple vertices on the same edge.
             if (firstVertexIndex >= 0) {
                 int totalVertexIndex = firstVertexIndex + startingVertices[neighborId];
                 minVertIndex = min(minVertIndex, totalVertexIndex);
@@ -737,34 +753,44 @@ kernel void genVerts(
         }
     }
     
-
     // Return this value!
     newVertexIndices[id] = minVertIndex;
 }
 
+// Compute actual positions of the vertices in 3D space.
+// This assumes that the cube at (0, 0, 0) has vertex zero at the origin,
+// and that all cubes are of unit size.
 kernel void vertexPositions(
-        int n,                  // Size of the grid
-        global float *grid,     // Grid field values
-        global int *globalVertId, // Which vertex this is globally
-        global int *cubeId,     // Which cube contains this vertex.
-        global int *cubeIndices,// Cube indices of the cubes, indexed by cube id.
-        global int *vertId,     // Which vertex in the cube this is (of the possible 15)
-        global float3 *pos      // Output: position of the vertex.
+        int n,                    // Size of the grid
+        global float *grid,       // Field values on our grid.
+        global int *globalVertId, // The previous vertex number of this vertex,
+                                  // before renaming (indexed by vertex number).
+        global int *cubeId,       // Same as `genVerts`.
+        global int *cubeIndices,  // Same as `genVerts`.
+        global int *vertId,       // Same as `genVerts`.
+        global float3 *pos        // Output: position of the vertex.
         ) {
-    int id = globalVertId[get_global_id(0)];
+
+    // Get the cube id and vertex id within the cube for this vertex.
+    int id = globalVertId[get_global_id(0)]; // Use the non-renamed vertex indices.
     int cube = cubeId[id];
     int vert = vertId[id];
-
     uchar index = cubeIndices[cube]; 
     int edge = triTable[index][vert];
 
+    // Extract the field values where we care about them.
     float field[8];
     int3 position = gridPosition(cube, n);
     fieldValues(grid, n, position, field);
 
+    // Compute the vertex location on an edge, 
+    // doing interpolation between the endpoints as necessary.
     float3 loc = vertex(field, edge);
+
+    // Translate to this cube's position.
     loc.x += position.x;
     loc.y += position.y;
     loc.z += position.z;
+
     pos[get_global_id(0)] = loc;
 }
