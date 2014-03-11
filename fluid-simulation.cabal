@@ -63,5 +63,6 @@ executable fluid-simulation
                        parsec ==3.1.*,
                        suspend ==0.1.*,
                        JuicyPixels,
-                       vector
+                       vector,
+                       split>=0.2
   

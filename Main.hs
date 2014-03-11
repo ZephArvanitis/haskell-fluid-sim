@@ -1,13 +1,10 @@
 import Simulator
 import MarchingCubes
 import Control.Monad.State
+import ObjectParser (name)
 
 main ::  IO ()
-main = do
-  mesh <- demoCube
-  runSimulator $ do
-    addMesh mesh
-    loop
+main = runSimulator loop
 
 loop :: Simulator ()
 loop = do
@@ -19,7 +16,10 @@ loop = do
     paused <- Simulator.isPaused
     unless paused $ liftIO updateSimulation
 
+    mesh <- liftIO demoCube
+    addMesh mesh
     Simulator.draw
+    deleteMesh $ name mesh
 
     loop
 

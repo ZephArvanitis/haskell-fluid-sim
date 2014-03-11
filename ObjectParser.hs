@@ -31,6 +31,7 @@ data Vertex = Vertex {
     y :: !Float,
     z :: !Float
 } deriving Show
+
 data Face = Triangle Int Int Int | Quad Int Int Int Int deriving Show
 
 vertexParser :: Parser [Vertex]

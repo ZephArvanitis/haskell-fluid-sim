@@ -1,4 +1,79 @@
 IDEAS
+---
+
+1. Semi-lagrangian advection
+2. Gravity and body forces
+3. Project
+
+
+Advection: Dq/Dt = 0 --> pu/pt = - u . grad u
+    MAC grid
+        velocities on faces
+        pressures at the center
+    Advect velocities:
+        input: 
+            size of grid
+            velocity components on grid faces
+        output:
+            new velocity components on grid faces
+        keep 2 copies of grid faces velocity components, so we reuse memory
+            switch back and forth between which one is in and which one is outpt
+
+    Algorithm: (using RK2) 
+    For each face in the grid:
+        Let x be the position in 3-space of the face center
+        1. x_mid = x - 0.5 dt u(x)
+            u(x) needs to be interpolated from other faces, see page 24 for ugly things
+        2. x_prev = x - dt u(x_mid)
+            u(x_mid) needs to be *fully* interpolated, not like previous one
+        3. u'(x) = u(x_prev)
+            but we only need to interpolate the component that needs to be on this face
+
+    Boundaries:
+        If x_prev is not in fluid, then several cases:
+            - If it's a source or a sink (???) or just steady air, we know the velocity.
+            - If we don't know velocity, project onto nearest grid point and interpolate value.
+
+Body Forces:
+  for each cell, choose faces which have z components
+      (or components along other body forces? wind?)
+  u_z' = u_z ± dt * g (sign depending on coordinate axes)
+
+Project:
+    Basic idea:
+        Set up the system of equations
+        Use preconditioned conjugate gradient
+        (We could start with regular CG first?)
+
+    System of equations:
+        Ap = b (b = divergences + modifications for boundaries)
+        How to compute b:
+            b = - divergence u + adjustments for solid boundaries
+            divergence = just normal discretized divergence using mac grid
+            adjustments = sum over (u - u_solid)/dx for each face that is a solid boundary
+            (see page 49)
+        How to compute A:
+            A is symmetric
+            Rows correspond to cells
+            So for each cell, we store:
+                A_diag: n_{i, j, k} = # of fluid or air neighbors
+                Also A in all "positive" directions (only need 3 directions for 3d)
+                Those correspond to pressure components for neighbor cells
+                    -1 if fluid
+                    0 if air
+                    0 if solid
+            Also! All elements of A are scaled by dt / (rho * dx^2)
+
+    Conjugate gradient:
+        Apply CG as normal?
+        PCG: see page 55
+        keep going until iteration limit or convergence (based on calculating divergence)
+            divergence remaining = residual vector
+            so convergence is tested via infinite norm of residual vector
+                
+
+OLD IDEAS (marching cubes, etc)
+-----------------------------
 
 triangle - which cube, which points within cube
 

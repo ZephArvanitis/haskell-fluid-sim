@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, ViewPatterns #-}
+{-# LANGUAGE FlexibleInstances, ViewPatterns, DoAndIfThenElse #-}
 module MarchingCubes where
 
 import Data.List( foldl', unzip3, groupBy, zipWith4, zip3, nub, sort )
