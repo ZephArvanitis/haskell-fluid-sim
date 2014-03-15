@@ -9,7 +9,8 @@ module OpenCL (
     runKernel,
     readKernelOutput,
     OutputBuffer,
-    InputBuffer
+    InputBuffer,
+    OpenCL
   ) where
 
 import Control.Monad
