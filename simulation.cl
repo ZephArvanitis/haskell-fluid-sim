@@ -2,47 +2,7 @@
 #define Y_COMPONENT 1
 #define Z_COMPONENT 2
 
-/* OLD interpolation
- *
-    switch (comp) {
-        case X_COMPONENT:
-            vel.x = GRID_ACCESS(vx, i, j, k);
-            vel.y = 0.25 *  (GRID_ACCESS(vy, i,   j,   k)
-                           + GRID_ACCESS(vy, i,   j+1, k)
-                           + GRID_ACCESS(vy, i-1, j,   k)
-                           + GRID_ACCESS(vy, i-1, j+1, k));
-            vel.z = 0.25 *  (GRID_ACCESS(vz, i,   j,   k)
-                           + GRID_ACCESS(vz, i,   j,   k+1)
-                           + GRID_ACCESS(vz, i-1, j,   k)
-                           + GRID_ACCESS(vz, i-1, j,   k+1));
-            break;
-        case Y_COMPONENT:
-            vel.x = 0.25 *  (GRID_ACCESS(vx, i,   j,   k)
-                           + GRID_ACCESS(vx, i+1, j,   k)
-                           + GRID_ACCESS(vx, i,   j-1, k)
-                           + GRID_ACCESS(vx, i+1, j-1, k));
-            vel.y = GRID_ACCESS(vy, i, j, k);
-            vel.z = 0.25 *  (GRID_ACCESS(vz, i,   j,   k)
-                           + GRID_ACCESS(vz, i,   j,   k+1)
-                           + GRID_ACCESS(vz, i,   j-1, k)
-                           + GRID_ACCESS(vz, i,   j-1, k+1));
-            break;
-        case Z_COMPONENT:
-            vel.x = 0.25 *  (GRID_ACCESS(vx, i,   j, k)
-                           + GRID_ACCESS(vx, i+1, j, k)
-                           + GRID_ACCESS(vx, i,   j, k-1)
-                           + GRID_ACCESS(vx, i+1, j, k-1));
-            vel.y = 0.25 *  (GRID_ACCESS(vy, i, j,   k)
-                           + GRID_ACCESS(vy, i, j+1, k)
-                           + GRID_ACCESS(vy, i, j,   k-1)
-                           + GRID_ACCESS(vy, i, j+1, k-1));
-            vel.z = GRID_ACCESS(vz, i, j, k);
-            break;
-    }
-
-// Assume that image type is CL_A
-#define GRID_ACCESS(v, i, j, k) (read_imagef(v, sampler, (float4)(i, j, k, 0)).w)
- */
+typedef uchar component;
 
 // Indexed by component. Figure out how much to shift from the middle of its
 // cube to get to the position of velocity component.
@@ -51,8 +11,6 @@ static float3 grid_shifts[3] = {
     (float3)(0.0, -0.5, 0.0),
     (float3)(0.0, 0.0, -0.5)
 };
-
-typedef uchar component;
 
 
 /*** Grid location and index conversion functions ***/
