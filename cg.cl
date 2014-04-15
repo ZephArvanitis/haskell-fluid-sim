@@ -78,3 +78,29 @@ kernel void elementwise_mult(read_only image3d_t v1,        // First  vector in 
 
     write_out(out, read_f(v1, i, j, k) * read_f(v2, i, j, k));
 }
+
+// Only valid for 2^n width grids. (...for integer n. Whole n, even! Also odd n.)
+kernel void sum_step(
+        read_only image3d_t in, 
+        write_only image3d_t out
+    ) {
+
+    // Width of the grid that needs to be filled with useful values.
+    int out_width = get_global_size(0);
+
+    int i = get_global_id(0);
+    int j = get_global_id(1);
+    int k = get_global_id(2);
+
+    float sum = 0;
+    sum += read_f(in, i,             j,             k);
+    sum += read_f(in, i + out_width, j,             k);
+    sum += read_f(in, i,             j + out_width, k);
+    sum += read_f(in, i,             j,             k + out_width);
+    sum += read_f(in, i + out_width, j + out_width, k);
+    sum += read_f(in, i + out_width, j,             k + out_width);
+    sum += read_f(in, i,             j + out_width, k + out_width);
+    sum += read_f(in, i + out_width, j + out_width, k + out_width);
+
+    write_out(out, sum);
+}
