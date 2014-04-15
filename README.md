@@ -6,4 +6,4 @@ This is a [Smoothed Particle Hydrodynamics](http://en.wikipedia.org/wiki/Smoothe
 Parts of the simulation:
   * OpenGL code for the simulator environment is in 'Simulator.hs'
   * Main simulation is 'Main.hs', with supporting files
-  * Parsec  parser for object mesh files is in 'ObjectParser.hs'
+  * Parsec  parser for object mesh files is in 'ObjectParser.hs' 
