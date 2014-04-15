@@ -227,4 +227,3 @@ kernel void project(
     write_out(A_yplus_mem, A_yplus);
     write_out(A_zplus_mem, A_zplus);
 }
-
