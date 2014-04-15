@@ -3,9 +3,9 @@ static float read_f(
     read_only  image3d_t vec,
     int x, int y, int z) {
 
-    // Sampler to read from images as 3D bool arrays.
-    // We clamp to the border color. In order to make the border color true, use CL_R;
-    // in order to make the border color false, use CL_A.
+    // Sampler to read from images as 3D arrays.  We clamp to the border color.
+    // In order to make the border color true or one, use CL_R; in order to
+    // make the border color false or zero, use CL_A.
     sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
                         CLK_ADDRESS_CLAMP |
                         CLK_FILTER_LINEAR;
@@ -39,3 +39,42 @@ kernel void add_vec(read_only image3d_t v1,     // First vector
     write_out(out, v1_comp + scale * v2_comp);
 }
 
+
+kernel void apply_A(read_only image3d_t v,        // Vector to multiply A by
+                    // Make sure that all A_* matrices are of type CL_A, because we assume that
+                    // the border color is zero when accessing the matrices.
+                    read_only image3d_t A_diag,   // "A" matrix diagonal entry for each cell.
+                    read_only image3d_t A_xplus,  // "A" matrix entry in the positive x for each cell.
+                    read_only image3d_t A_yplus,  // "A" matrix entry in the positive y for each cell.
+                    read_only image3d_t A_zplus,  // "A" matrix entry in the positive z for each cell.
+                    write_only image3d_t out      // Output vector: A * v
+        ) {
+    int i = get_global_id(0);
+    int j = get_global_id(1);
+    int k = get_global_id(2);
+
+    float output = 0f;
+    output += read_f(A_diag, i, j, k) * read_f(v, i, j, k);
+
+    output += read_f(A_xplus, i, j, k) * read_f(v, i+1, j, k);
+    output += read_f(A_xplus, i-1, j, k) * read_f(v, i-1, j, k);
+
+    output += read_f(A_yplus, i, j, k) * read_f(v, i, j+1, k);
+    output += read_f(A_yplus, i, j-1, k) * read_f(v, i, j-1, k);
+
+    output += read_f(A_zplus, i, j, k) * read_f(v, i, j, k+1);
+    output += read_f(A_zplus, i, j, k-1) * read_f(v, i, j, k-1);
+
+    write_out(out, output);
+}
+
+kernel void elementwise_mult(read_only image3d_t v1,        // First  vector in dot product
+                             read_only image3d_t v2,        // Second vector in dot product
+                             write_only image3d_t out       // Output vector of pairwise products
+        ) {
+    int i = get_global_id(0);
+    int j = get_global_id(1);
+    int k = get_global_id(2);
+
+    write_out(out, read_f(v1, i, j, k) * read_f(v2, i, j, k));
+}
