@@ -1,4 +1,4 @@
-{-# LANGUAGE OverlappingInstances, ScopedTypeVariables, FlexibleInstances #-}
+{-# LANGUAGE OverlappingInstances, ScopedTypeVariables, FlexibleInstances, GeneralizedNewtypeDeriving #-}
 module OpenCL (
     Kernel,
     initializeOpenCL,
@@ -14,6 +14,8 @@ module OpenCL (
   ) where
 
 import Control.Monad
+import Control.Monad.IO.Class
+import Control.Monad.State
 import Control.Applicative
 
 import Control.Parallel.OpenCL  
@@ -23,6 +25,9 @@ import Foreign.C.Types( CFloat, CInt )
 import Foreign.Ptr
 import Foreign.Marshal.Array
 import Foreign.Storable
+
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 -- A kernel.
 data Kernel = Kernel (Ptr ())
@@ -36,28 +41,53 @@ data OutputBuffer a = OutputBuffer Int Int (Ptr a) (Ptr ())
 
 
 -- OpenCL Info.
-data OpenCL = OpenCL {
+data OpenCLData = OpenCLData {
     clPlatform :: CLPlatformID,
     clDevice :: CLDeviceID,
     clContext :: CLContext,
-    clQueue :: CLCommandQueue
+    clQueue :: CLCommandQueue,
+    clKernels :: Map String CLKernel
   }
 
-initializeOpenCL :: IO OpenCL
-initializeOpenCL = do
+newtype OpenCL a = OpenCL { unOpenCL :: StateT OpenCLData IO a }
+                   deriving (Monad, MonadIO)
+
+{-
+
+-- These lines are automatically added by GeneralizedNewtypeDeriving
+
+instance Monad OpenCL where
+  return = OpenCL . return
+  OpenCL st >>= f = OpenCL $ st >>= (unOpenCL . f)
+
+instance MonadIO OpenCL where
+  liftIO = OpenCL . liftIO
+
+-}
+
+openCL :: [FilePath] -> OpenCL a -> IO a
+openCL filenames action = do
+  initState <- initializeOpenCL filenames
+  evalStateT initState action
+
+initializeOpenCL :: [FilePath] -> IO OpenCLData
+initializeOpenCL filenames = do
   -- Initialize OpenCL
   (platform:_) <- clGetPlatformIDs
   (device:_) <- clGetDeviceIDs platform CL_DEVICE_TYPE_ALL
   context <- clCreateContext [CL_CONTEXT_PLATFORM platform] [device] putStrLn
   queue <- clCreateCommandQueue context device []
-  return OpenCL {
+  let cl = OpenCLData {
     clPlatform = platform,
     clDevice = device,
     clContext = context,
-    clQueue = queue
+    clQueue = queue,
+    clKernels = Map.fromList []
   }
+  kernels <- concat <$> mapM (sourceKernels cl) filenames
+  return $ cl { clKernels = Map.fromList kernels }
 
-inputBuffer :: Storable a => OpenCL -> [a] -> IO (InputBuffer a)
+inputBuffer :: Storable a => [a] -> OpenCL (InputBuffer a)
 inputBuffer cl input = do
   arr <- newArray input 
   InputBuffer (length input) bufsize <$> clCreateBuffer (clContext cl) flags (bufsize, castPtr arr)  
@@ -65,7 +95,7 @@ inputBuffer cl input = do
     flags = [CL_MEM_READ_ONLY, CL_MEM_COPY_HOST_PTR]
     bufsize = length input * sizeOf (head input)
 
-outputBuffer :: forall a. Storable a => OpenCL -> Int -> IO (OutputBuffer a)
+outputBuffer :: forall a. Storable a => Int -> OpenCL (OutputBuffer a)
 outputBuffer cl size = do
   arr <- mallocArray size :: IO (Ptr a)
   OutputBuffer size bufsize arr <$> clCreateBuffer (clContext cl) flags (bufsize, nullPtr)
@@ -74,23 +104,24 @@ outputBuffer cl size = do
     bufsize = size * sizeOf (undefined :: a)
 
 
-sourceKernels :: OpenCL -> FilePath -> [String] -> IO [Kernel]
-sourceKernels cl file kernels = do
+sourceKernels :: OpenCLData -> FilePath -> IO [(String, Kernel)]
+sourceKernels cl file = do
   -- Load the file and program.
   source <- readFile file
   program <- clCreateProgramWithSource (clContext cl) source
   clBuildProgram program [clDevice cl] ""
 
   -- Load all kernels.
-  forM kernels $ \kernel ->
-    Kernel <$> clCreateKernel program kernel
+  kernels <- clCreateKernelsInProgram program
+  names <- mapM clGetKernelFunctionName kernels 
+  return $ zip names $ map Kernel kernels
 
-runKernel :: OpenCL -> Kernel -> [Int] -> [Int] -> IO KernelOutput
+runKernel :: Kernel -> [Int] -> [Int] -> OpenCL KernelOutput
 runKernel cl (Kernel kernel) global local  = do
   eventExec <- clEnqueueNDRangeKernel (clQueue cl) kernel global local []
   return $ KernelOutput eventExec
 
-readKernelOutput :: Storable a => OpenCL -> KernelOutput -> OutputBuffer a -> IO [a]
+readKernelOutput :: Storable a => KernelOutput -> OutputBuffer a -> OpenCL [a]
 readKernelOutput cl (KernelOutput exec) (OutputBuffer nels size arr mem) = do
   clEnqueueReadBuffer (clQueue cl) mem True 0 size (castPtr arr) [exec]
   peekArray nels arr

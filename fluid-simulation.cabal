@@ -64,5 +64,6 @@ executable fluid-simulation
                        suspend ==0.1.*,
                        JuicyPixels,
                        vector,
+                       transformers,
                        split>=0.2
   
