@@ -5,26 +5,24 @@ import ObjectParser (name)
 import OpenCL
 
 main ::  IO ()
-main = do
-  cl <- initializeOpenCL
-  kernels <- marchingCubeKernels cl
-  runSimulator $ loop cl kernels
+main = openCL ["marchingCubes.cl"] $ do
+  runSimulator loop
 
-loop cl kernels = do
+loop = do
   running <- Simulator.isRunning
   when running $ do
     Simulator.waitForNextFrame
     Simulator.update
 
     paused <- Simulator.isPaused
-    unless paused $ liftIO updateSimulation
+    unless paused updateSimulation
 
     mesh <- liftIO $ demoCube cl kernels
     addMesh mesh
     Simulator.draw
     deleteMesh $ name mesh
 
-    loop cl kernels
+    loop
 
-updateSimulation :: IO ()
+updateSimulation :: Simulator ()
 updateSimulation = return ()

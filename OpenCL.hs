@@ -28,9 +28,10 @@ import Foreign.Storable
 
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (fromJust)
 
 -- A kernel.
-data Kernel = Kernel (Ptr ())
+data Kernel = Kernel { unKernel :: Ptr () }
 data KernelOutput = KernelOutput (Ptr ())
 type KernelName = String
 
@@ -139,34 +140,35 @@ readKernelOutput (KernelOutput exec) (OutputBuffer nels size arr mem) = do
 -- when it reaches the end of the argument chain with some IO a,
 -- it runs all of the IO actions (in reverse).
 class KernelArgs args where
-  arg :: Kernel -> [IO ()] -> args
+  arg :: KernelName -> [OpenCL ()] -> args
 
 -- Build up the list of IO actions.
 instance KernelArgs cl => KernelArgs (InputBuffer a -> cl) where
-    arg (Kernel kernel) argStack = \(InputBuffer _ _ value) ->
+    arg kernel argStack (InputBuffer _ _ value) =
       -- Prepent a new clSetKernelArgSto to the stack.
-      arg (Kernel kernel) (clSetKernelArgSto kernel argNumber value:argStack)
-      where
-        argNumber = fromIntegral $ length argStack
+      arg kernel $ command kernel argStack value:argStack
 
 instance KernelArgs cl => KernelArgs (OutputBuffer a -> cl) where
-    arg (Kernel kernel) argStack = \(OutputBuffer _ _ mem value) ->
+    arg kernel argStack (OutputBuffer _ _ mem value) =
       -- Prepent a new clSetKernelArgSto to the stack.
-      arg (Kernel kernel) (clSetKernelArgSto kernel argNumber value:argStack)
-      where
-        argNumber = fromIntegral $ length argStack
+      arg kernel $ command kernel argStack value:argStack
 
 instance (KernelArgs cl, Storable a) => KernelArgs (a -> cl) where
-    arg (Kernel kernel) argStack = \value ->
+    arg kernel argStack value =
       -- Prepent a new clSetKernelArgSto to the stack.
-      arg (Kernel kernel) (clSetKernelArgSto kernel argNumber value:argStack)
-      where
-        argNumber = fromIntegral $ length argStack
+      arg kernel $ command kernel argStack value:argStack
+
+command :: Storable a => KernelName -> [OpenCL ()] -> a -> OpenCL ()
+command kernel argStack value = do
+  kernel <- gets (unKernel . fromJust . Map.lookup kernel . clKernels)
+  liftIO $ clSetKernelArgSto kernel argNumber value
+  where
+    argNumber = fromIntegral $ length argStack
 
 -- Evaluate all built-up IO actions from previous KernelArgs.
 -- We allow any IO so that users do not have to specify IO () 
 -- explicitly. Using the output will result in an error.
-instance KernelArgs (IO a) where
+instance KernelArgs (OpenCL a) where
   arg _ stack = do
     sequence_ $ reverse stack
 
@@ -174,5 +176,5 @@ instance KernelArgs (IO a) where
     return $ error "Cannot use output of setArgs"
 
 -- Set arguments for a kernel.
-setKernelArgs :: KernelArgs args => Kernel -> args
+setKernelArgs :: KernelArgs args => KernelName -> args
 setKernelArgs kernel = arg kernel []
