@@ -1,7 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE RankNTypes #-}
 module Simulator (
-  initialize,
   terminate,
   isRunning,
   isPaused,
@@ -10,7 +9,6 @@ module Simulator (
   addHelpText,
   addMesh,
   deleteMesh,
-  SimulatorData(..),
   waitForNextFrame,
   registerHeld,
   registerPressed,
@@ -51,11 +49,12 @@ import qualified Data.Map as Map
 import Control.Lens
 
 data KeyButtonState = Pressed | Released deriving Show
-type KeyCallback = (KeyButtonState -> SimulatorUpdate)
-type Simulator a = StateT SimulatorData IO a 
-type SimulatorUpdate = Simulator ()
+type KeyCallback m = (KeyButtonState -> SimulatorUpdate m)
+type Simulator a = SimulatorT IO a
+type SimulatorT m a = StateT (SimulatorData m) m a 
+type SimulatorUpdate m = SimulatorT m ()
 
-data SimulatorData = SimulatorData {
+data SimulatorData m = SimulatorData {
 	-- Main loop will exit if running becomes false.
 	_running :: Bool,
 
@@ -92,10 +91,10 @@ data SimulatorData = SimulatorData {
   _keyboardHelpStrings :: [(String, String)],
 
   -- Callback stuff
-  _keyCallbacks :: Map Char KeyCallback,
+  _keyCallbacks :: Map Char (KeyCallback m),
 
   -- Things that happen every frame
-  _frameActions :: Map Char SimulatorUpdate,
+  _frameActions :: Map Char (SimulatorUpdate m),
 
   -- Key event channel
   _keyEventChannel :: TChan (Char, KeyButtonState),
@@ -173,8 +172,8 @@ loadTexture filename = do
             (GL.PixelData GL.RGB GL.UnsignedByte ptr)
       _ -> error "Unknown image type"
 
-initSimulatorState :: IO SimulatorData
-initSimulatorState = do
+initSimulatorState:: MonadIO m => m (SimulatorData m)
+initSimulatorState = liftIO $ do
   ticker <- newChan
   keyChannel <- newTChanIO
 
@@ -227,14 +226,15 @@ height = 480
 aspectRatio :: Fractional a => a
 aspectRatio = fromIntegral (width :: Integer) / fromIntegral (height :: Integer)
 
-initialize :: IO SimulatorData
+initialize :: (MonadIO m, Functor m) => m (SimulatorData m)
 initialize = do
-  void $ GLUTInit.initialize "Simulator" []
-  GLUTInit.initialDisplayMode $= [GLUTInit.RGBMode, GLUTInit.WithDepthBuffer]
-  void $ Window.createWindow "Simulator"
-  Window.windowSize $= GL.Size width height
-  Window.windowTitle $= "Fluid Simulation Thingamadoop" 
-  Window.windowStatus $= Window.Shown
+  liftIO $ do
+    void $ GLUTInit.initialize "Simulator" []
+    GLUTInit.initialDisplayMode $= [GLUTInit.RGBMode, GLUTInit.WithDepthBuffer]
+    void $ Window.createWindow "Simulator"
+    Window.windowSize $= GL.Size width height
+    Window.windowTitle $= "Fluid Simulation Thingamadoop" 
+    Window.windowStatus $= Window.Shown
 
   state <- initSimulatorState
   let channel = state^.keyEventChannel :: TChan (Char, KeyButtonState)
@@ -242,23 +242,26 @@ initialize = do
         atomically $ writeTChan channel (char, direc)
       pressedCallback = keyCallback Pressed
       releasedCallback = keyCallback Released
-  Callbacks.keyboardCallback $= Just pressedCallback
-  Callbacks.keyboardUpCallback $= Just releasedCallback
 
-  void $ repeatedTimer (writeChan (state^.frameTicker) ()) $ msDelay millisPerFrame
-  initGL
-  putStrLn "Running simulator!"
+  liftIO $ do
+    Callbacks.keyboardCallback $= Just pressedCallback
+    Callbacks.keyboardUpCallback $= Just releasedCallback
+
+    void $ repeatedTimer (writeChan (state^.frameTicker) ()) $ msDelay millisPerFrame
+    initGL
+    putStrLn "Running simulator!"
+
   snd <$> runStateT initKeys state
 
-runSimulator :: Simulator a -> IO () 
+runSimulator :: (MonadIO m, Functor m) => SimulatorT m a -> m () 
 runSimulator action = initialize >>= runStateT action >> terminate
 
-toggle :: Lens' SimulatorData Bool -> Simulator ()
+toggle :: Monad m => Lens' (SimulatorData m) Bool -> SimulatorT m ()
 toggle booleanLens = do
   bool <- use booleanLens
   booleanLens .= not bool
 
-bound :: Lens' SimulatorData Float -> Float -> Float -> Lens' SimulatorData Float
+bound :: Lens' (SimulatorData m) Float -> Float -> Float -> Lens' (SimulatorData m) Float
 bound numLens min max = lens getter setter
   where getter object = object^.numLens
         setter object newValue = numLens .~ value $ object
@@ -267,7 +270,7 @@ bound numLens min max = lens getter setter
                   | newValue > max = max
                   | otherwise = newValue
 
-initKeys :: SimulatorUpdate
+initKeys :: MonadIO m => SimulatorUpdate m
 initKeys = do
     forM_ triggers registerTrigger
     forM_ holds registerHeldFunc
@@ -310,10 +313,10 @@ initGL = do
         specular = Specular 0.1 0.1 0.1
         diffuse = Diffuse 1.0 1.0 1.0
 
-waitForNextFrame :: SimulatorUpdate
+waitForNextFrame :: MonadIO m  => SimulatorUpdate m
 waitForNextFrame = use frameTicker >>= liftIO . readChan
 
-update :: SimulatorUpdate
+update :: (MonadIO m, Monad m, Functor m) => SimulatorUpdate m
 update = do
   input <- collectInput
   actions <- elems <$> use frameActions
@@ -326,7 +329,7 @@ update = do
         Nothing -> return ()
         Just callback -> callback buttonState 
 
-collectInput :: Simulator [(Char, KeyButtonState)]
+collectInput :: MonadIO m => SimulatorT m [(Char, KeyButtonState)]
 collectInput = do
   chan <- use keyEventChannel
   empty <- liftIO $ atomically $ isEmptyTChan chan
@@ -335,7 +338,7 @@ collectInput = do
     things <- collectInput
     return $ thing : things
 
-draw :: SimulatorUpdate
+draw :: (MonadIO m, Functor m) => SimulatorUpdate m
 draw = do
   liftIO mainLoopEvent
   liftIO $ GL.clear [GL.ColorBuffer, GL.DepthBuffer]
@@ -370,7 +373,7 @@ cross (ObjectParser.Vertex x1 y1 z1) (ObjectParser.Vertex x2 y2 z2) = ObjectPars
   z = x1*y2 - y1*x2
 }
 
-drawScene :: SimulatorUpdate
+drawScene :: (MonadIO m, Functor m) => SimulatorUpdate m
 drawScene = do
   -- Compute camera location based on spherical coordinates
   distance <- use distance
@@ -406,7 +409,7 @@ drawScene = do
 
     when globalAxes drawCoordinateAxes
 
-drawOverlays :: SimulatorUpdate
+drawOverlays :: MonadIO m => SimulatorUpdate m
 drawOverlays = 
   let heading = "Keyboard Commands"
       overlayBorder = 30
@@ -451,7 +454,7 @@ drawOverlays =
         text xLoc yLoc font key
         text tabLocation yLoc font helpText
 
-drawGround :: SimulatorUpdate
+drawGround :: MonadIO m => SimulatorUpdate m
 drawGround = do
   (wallTex, groundTex) <- use environmentTextures
 
@@ -505,7 +508,7 @@ quad [(x1, y1, z1),
 quad _ = undefined
 
 -- | Draw coordinate axes and arrows in colors, without lighting.
-drawCoordinateAxes :: SimulatorUpdate
+drawCoordinateAxes :: MonadIO m => SimulatorUpdate m
 drawCoordinateAxes = temporarily Disabled Lighting $ do
   -- Red x-axis line.
   rgb 1.0 0.0 0.0
@@ -543,7 +546,7 @@ drawCoordinateAxes = temporarily Disabled Lighting $ do
     rotate (-90) 0.0 0.0 1.0
     renderObject Solid $ Cone 0.04 0.2 10 10
 
-drawMesh :: Mesh -> SimulatorUpdate
+drawMesh :: MonadIO m => Mesh -> SimulatorUpdate m
 drawMesh mesh = do
   let verts = vertices mesh
       fs = faces mesh
@@ -575,8 +578,8 @@ drawMesh mesh = do
           vertex (x vert) (y vert) (z vert)
 
 
-terminate :: IO ()
-terminate = do
+terminate :: MonadIO m => m ()
+terminate = liftIO $ do
   window <- GL.get Window.currentWindow
   case window of
     Nothing -> return ()
@@ -586,11 +589,11 @@ terminate = do
 -- Key registering
 
 -- Raw
-registerKey :: Char -> KeyCallback -> SimulatorUpdate
+registerKey :: MonadIO m => Char -> KeyCallback m -> SimulatorUpdate m
 registerKey char callback = keyCallbacks %= insert char callback
 
 -- Nice
-registerHeld :: Char -> SimulatorUpdate -> SimulatorUpdate
+registerHeld :: MonadIO m => Char -> SimulatorUpdate m -> SimulatorUpdate m
 registerHeld char updater = registerKey char callback
   where 
     callback buttonState = frameActions %= newFrameActions
@@ -600,7 +603,7 @@ registerHeld char updater = registerKey char callback
             Released -> delete char
             Pressed -> insert char updater
 
-registerPressed :: Char -> SimulatorUpdate -> SimulatorUpdate
+registerPressed :: MonadIO m => Char -> SimulatorUpdate m -> SimulatorUpdate m
 registerPressed char updater =
   registerKey char $ \buttonState ->
     case buttonState of
@@ -608,17 +611,17 @@ registerPressed char updater =
       Released -> return ()
 
 -- Things that don't require IO
-isRunning :: Simulator Bool
+isRunning :: Monad m => SimulatorT m Bool
 isRunning = use running
 
-isPaused :: Simulator Bool
+isPaused :: Monad m => SimulatorT m Bool
 isPaused = use paused
 
-addHelpText ::  String -> String -> SimulatorUpdate
+addHelpText ::  Monad m => String -> String -> SimulatorUpdate m
 addHelpText key text = keyboardHelpStrings %= ((key, text):)
 
-addMesh :: Mesh -> SimulatorUpdate
+addMesh :: Monad m => Mesh -> SimulatorUpdate m
 addMesh mesh = meshes %= (mesh:)
 
-deleteMesh :: MeshName -> SimulatorUpdate
+deleteMesh :: Monad m => MeshName -> SimulatorUpdate m
 deleteMesh meshname = meshes %= filter ((/= meshname) . name) 
