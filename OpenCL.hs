@@ -32,6 +32,7 @@ import qualified Data.Map as Map
 -- A kernel.
 data Kernel = Kernel (Ptr ())
 data KernelOutput = KernelOutput (Ptr ())
+type KernelName = String
 
 -- Memory buffers.
 data InputBuffer a  = InputBuffer Int Int (Ptr ())
@@ -46,11 +47,11 @@ data OpenCLData = OpenCLData {
     clDevice :: CLDeviceID,
     clContext :: CLContext,
     clQueue :: CLCommandQueue,
-    clKernels :: Map String CLKernel
+    clKernels :: Map String Kernel
   }
 
 newtype OpenCL a = OpenCL { unOpenCL :: StateT OpenCLData IO a }
-                   deriving (Monad, MonadIO)
+                   deriving (Monad, MonadIO, Functor, Applicative, MonadState OpenCLData)
 
 {-
 
@@ -68,7 +69,7 @@ instance MonadIO OpenCL where
 openCL :: [FilePath] -> OpenCL a -> IO a
 openCL filenames action = do
   initState <- initializeOpenCL filenames
-  evalStateT initState action
+  evalStateT (unOpenCL action) initState 
 
 initializeOpenCL :: [FilePath] -> IO OpenCLData
 initializeOpenCL filenames = do
@@ -88,17 +89,19 @@ initializeOpenCL filenames = do
   return $ cl { clKernels = Map.fromList kernels }
 
 inputBuffer :: Storable a => [a] -> OpenCL (InputBuffer a)
-inputBuffer cl input = do
-  arr <- newArray input 
-  InputBuffer (length input) bufsize <$> clCreateBuffer (clContext cl) flags (bufsize, castPtr arr)  
+inputBuffer input = do
+  arr <- liftIO $ newArray input 
+  cl <- get
+  InputBuffer (length input) bufsize <$> liftIO (clCreateBuffer (clContext cl) flags (bufsize, castPtr arr))
   where
     flags = [CL_MEM_READ_ONLY, CL_MEM_COPY_HOST_PTR]
     bufsize = length input * sizeOf (head input)
 
 outputBuffer :: forall a. Storable a => Int -> OpenCL (OutputBuffer a)
-outputBuffer cl size = do
-  arr <- mallocArray size :: IO (Ptr a)
-  OutputBuffer size bufsize arr <$> clCreateBuffer (clContext cl) flags (bufsize, nullPtr)
+outputBuffer size = do
+  arr <- liftIO $ mallocArray size :: OpenCL (Ptr a)
+  cl <- get
+  OutputBuffer size bufsize arr <$> liftIO (clCreateBuffer (clContext cl) flags (bufsize, nullPtr))
   where
     flags = [CL_MEM_WRITE_ONLY]
     bufsize = size * sizeOf (undefined :: a)
@@ -116,15 +119,19 @@ sourceKernels cl file = do
   names <- mapM clGetKernelFunctionName kernels 
   return $ zip names $ map Kernel kernels
 
-runKernel :: Kernel -> [Int] -> [Int] -> OpenCL KernelOutput
-runKernel cl (Kernel kernel) global local  = do
-  eventExec <- clEnqueueNDRangeKernel (clQueue cl) kernel global local []
+runKernel :: KernelName -> [Int] -> [Int] -> OpenCL KernelOutput
+runKernel kernelName global local  = do
+  cl <- get
+  let Just (Kernel kernel) = Map.lookup kernelName (clKernels cl)
+  eventExec <- liftIO $ clEnqueueNDRangeKernel (clQueue cl) kernel global local []
   return $ KernelOutput eventExec
 
 readKernelOutput :: Storable a => KernelOutput -> OutputBuffer a -> OpenCL [a]
-readKernelOutput cl (KernelOutput exec) (OutputBuffer nels size arr mem) = do
-  clEnqueueReadBuffer (clQueue cl) mem True 0 size (castPtr arr) [exec]
-  peekArray nels arr
+readKernelOutput (KernelOutput exec) (OutputBuffer nels size arr mem) = do
+  cl <- get
+  liftIO $ do
+    clEnqueueReadBuffer (clQueue cl) mem True 0 size (castPtr arr) [exec]
+    peekArray nels arr
 
 -- Variadic argument class for setKernelArgs.
 -- The `args` function builds up a list of IO actions, each
