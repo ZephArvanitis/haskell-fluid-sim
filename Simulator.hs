@@ -12,8 +12,8 @@ module Simulator (
   waitForNextFrame,
   registerHeld,
   registerPressed,
-  Simulator,
-  runSimulator
+  Simulator, SimulatorT,
+  runSimulator,
   ) where
 
 import qualified Graphics.Rendering.OpenGL as GL

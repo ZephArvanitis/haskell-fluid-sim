@@ -17,7 +17,7 @@ loop = do
     paused <- Simulator.isPaused
     unless paused updateSimulation
 
-    mesh <- lift $ demoCube cl kernels
+    mesh <- lift demoCube
     addMesh mesh
     Simulator.draw
     deleteMesh $ name mesh

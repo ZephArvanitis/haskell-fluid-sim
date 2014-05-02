@@ -11,6 +11,7 @@ import Data.Array.MArray( newListArray, getBounds, readArray, writeArray, freeze
 import Data.Array.IO( IOArray )
 import Data.Array( listArray, Array, array, elems )
 import Foreign.C.Types( CInt, CFloat )
+import Control.Monad.IO.Class
 
 import ObjectParser
 import OpenCL
@@ -143,11 +144,11 @@ demoCube = do
 
   setKernelArgs "genVerts" nC cubeIdInput cubeIndInput vertIdInput startingVertInput globalVertInds
   genVertsOut <- runKernel "genVerts" [numVerts] [1]
-  vertArray <- readKernelOutput genVertsOut globalVertInds >>= toMArray
+  vertArray <- readKernelOutput genVertsOut globalVertInds >>= (liftIO . toMArray)
 
   -- Rename vertices to one through k (k = length of unique vertices).
   -- This changes the vertex array in place!
-  (_, len) <- getBounds vertArray
+  (_, len) <- liftIO $ getBounds vertArray
   let loop :: Int -- Current index in the mutable array.
            -> CInt -- Current next label for the unique vertices.
            -> [AbsVertexId] -- An accumulator for the global vertex indices corresponding to each label.
@@ -176,8 +177,8 @@ demoCube = do
             loop (ind + 1) counter backwardsAccum
 
   -- Rename vertices and then freeze the array to be immutable.
-  previousGlobalIndices <- loop 1 1 [] :: OpenCL [CInt]
-  renamedVerts <- freeze vertArray
+  previousGlobalIndices <- liftIO $ loop 1 1 [] :: OpenCL [CInt]
+  renamedVerts <- liftIO $ freeze vertArray
 
   -- Generate actual vertex positions in 3-space.
   let numUniqueVerts = fromIntegral $ maximum $ elems renamedVerts
