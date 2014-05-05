@@ -41,7 +41,16 @@ data InputBuffer a  = InputBuffer Int Int (Ptr ())
 
 data OutputBuffer a = OutputBuffer Int Int (Ptr a) (Ptr ())
 
+-- Types and such to manage image memory
+data ImageType = ImageRed | ImageAlpha
 
+data ImageBuffer a = ImageBuffer {
+                        width     :: Int,
+                        height    :: Int,
+                        depth     :: Int,
+                        imageType :: ImageType,
+                        memLoc    :: Ptr ()
+                      }
 
 -- OpenCL Info.
 data OpenCLData = OpenCLData {
@@ -108,6 +117,14 @@ outputBuffer size = do
     flags = [CL_MEM_WRITE_ONLY]
     bufsize = size * sizeOf (undefined :: a)
 
+imageBuffer :: Storable a 
+            => Int                    -- ^ Image width.
+            -> Int                    -- ^ Image height.
+            -> Int                    -- ^ Image depth.
+            -> ImageType              -- ^ Type of image (red or alpha, relevant for clamping)
+            -> (Int -> Int -> Int -> a)  -- ^ Given x, y, z indices, generate image value at that index.
+            -> OpenCL (ImageBuffer a) 
+imageBuffer = undefined
 
 sourceKernels :: OpenCLData -> FilePath -> IO [(String, Kernel)]
 sourceKernels cl file = do

@@ -24,5 +24,5 @@ loop = do
 
     loop
 
-updateSimulation :: Simulator ()
+updateSimulation :: Monad m => SimulatorT m ()
 updateSimulation = return ()
