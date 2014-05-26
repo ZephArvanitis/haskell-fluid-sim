@@ -26,6 +26,7 @@ import Foreign.C.Types( CFloat, CInt )
 import Foreign.Ptr
 import Foreign.Marshal.Array
 import Foreign.Storable
+import Foreign.Marshal.Alloc
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -43,13 +44,12 @@ data OutputBuffer a = OutputBuffer Int Int (Ptr a) (Ptr ())
 
 -- Types and such to manage image memory
 data ImageType = ImageRed | ImageAlpha
-
 data ImageBuffer a = ImageBuffer {
                         width     :: Int,
                         height    :: Int,
                         depth     :: Int,
                         imageType :: ImageType,
-                        memLoc    :: Ptr ()
+                        memLoc    :: CLMem
                       }
 
 -- OpenCL Info.
@@ -124,7 +124,30 @@ imageBuffer :: Storable a
             -> ImageType              -- ^ Type of image (red or alpha, relevant for clamping)
             -> (Int -> Int -> Int -> a)  -- ^ Given x, y, z indices, generate image value at that index.
             -> OpenCL (ImageBuffer a) 
-imageBuffer = undefined
+imageBuffer width height depth imageType generator = do
+    context <- gets clContext
+    let flags = [CL_MEM_READ_WRITE, CL_MEM_ALLOC_HOST_PTR, CL_MEM_COPY_HOST_PTR]
+        imageFmt = CLImageFormat order channelType
+        order = case imageType of
+                  ImageRed -> CL_R
+                  ImageAlpha -> CL_A
+        elementSize = sizeOf (generator undefined undefined undefined)
+        channelType = case elementSize of
+                        8 -> CL_UNSIGNED_INT8
+                        32 -> CL_FLOAT
+                        _ -> error "Expecting Storable CInt8 or CFloat."
+        nBytes = width * height * depth * elementSize
+    memLoc <- liftIO $ allocaBytes nBytes $ \ptr -> do
+      forM_ [(x, y, z) | x <- [1..width], y <- [1..height], z <- [1..depth]] $ \(x, y, z) ->
+        pokeByteOff ptr (x + width * y + width * height * z) (generator x y z)
+      clCreateImage3D context flags imageFmt width height depth 0 0 ptr
+    return ImageBuffer {
+      width = width,
+      height = height,
+      depth = depth,
+      imageType = imageType,
+      memLoc = memLoc
+    }
 
 sourceKernels :: OpenCLData -> FilePath -> IO [(String, Kernel)]
 sourceKernels cl file = do
