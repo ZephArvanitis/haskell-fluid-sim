@@ -1,5 +1,14 @@
 {-# LANGUAGE OverlappingInstances, ScopedTypeVariables, FlexibleInstances, GeneralizedNewtypeDeriving #-}
 module OpenCL (
+    OutputBuffer,
+    ImageBuffer,
+    InputBuffer,
+    imageWidth     ,
+    imageHeight    ,
+    imageDepth     ,
+    imageType ,
+    memLoc    ,
+
     Kernel,
     initializeOpenCL,
     setKernelArgs,
@@ -8,8 +17,7 @@ module OpenCL (
     outputBuffer,
     runKernel,
     readKernelOutput,
-    OutputBuffer,
-    InputBuffer,
+    imageBuffer,
     OpenCL,
     openCL
   ) where
@@ -34,7 +42,7 @@ import Data.Maybe (fromJust)
 
 -- A kernel.
 data Kernel = Kernel { unKernel :: Ptr () }
-data KernelOutput = KernelOutput (Ptr ())
+data KernelOutput = KernelOutput { outputEvent :: Ptr () }
 type KernelName = String
 
 -- Memory buffers.
@@ -45,9 +53,9 @@ data OutputBuffer a = OutputBuffer Int Int (Ptr a) (Ptr ())
 -- Types and such to manage image memory
 data ImageType = ImageRed | ImageAlpha
 data ImageBuffer a = ImageBuffer {
-                        width     :: Int,
-                        height    :: Int,
-                        depth     :: Int,
+                        imageWidth     :: Int,
+                        imageHeight    :: Int,
+                        imageDepth     :: Int,
                         imageType :: ImageType,
                         memLoc    :: CLMem
                       }
@@ -133,8 +141,8 @@ imageBuffer width height depth imageType generator = do
                   ImageAlpha -> CL_A
         elementSize = sizeOf (generator undefined undefined undefined)
         channelType = case elementSize of
-                        8 -> CL_UNSIGNED_INT8
-                        32 -> CL_FLOAT
+                        1 -> CL_UNSIGNED_INT8
+                        4 -> CL_FLOAT
                         _ -> error "Expecting Storable CInt8 or CFloat."
         nBytes = width * height * depth * elementSize
     memLoc <- liftIO $ allocaBytes nBytes $ \ptr -> do
@@ -142,9 +150,9 @@ imageBuffer width height depth imageType generator = do
         pokeByteOff ptr (x + width * y + width * height * z) (generator x y z)
       clCreateImage3D context flags imageFmt width height depth 0 0 ptr
     return ImageBuffer {
-      width = width,
-      height = height,
-      depth = depth,
+      imageWidth = width,
+      imageHeight = height,
+      imageDepth = depth,
       imageType = imageType,
       memLoc = memLoc
     }
@@ -162,10 +170,14 @@ sourceKernels cl file = do
   return $ zip names $ map Kernel kernels
 
 runKernel :: KernelName -> [Int] -> [Int] -> OpenCL KernelOutput
-runKernel kernelName global local  = do
+runKernel kernelName global local  = runKernelWithDependencies kernelName global local []
+
+runKernelWithDependencies :: KernelName -> [Int] -> [Int] -> [KernelOutput] -> OpenCL KernelOutput
+runKernelWithDependencies kernelName global local outputs = do
   cl <- get
   let Just (Kernel kernel) = Map.lookup kernelName (clKernels cl)
-  eventExec <- liftIO $ clEnqueueNDRangeKernel (clQueue cl) kernel global local []
+      events = map outputEvent output
+  eventExec <- liftIO $ clEnqueueNDRangeKernel (clQueue cl) kernel global local events
   return $ KernelOutput eventExec
 
 readKernelOutput :: Storable a => KernelOutput -> OutputBuffer a -> OpenCL [a]
@@ -186,17 +198,22 @@ class KernelArgs args where
 -- Build up the list of IO actions.
 instance KernelArgs cl => KernelArgs (InputBuffer a -> cl) where
     arg kernel argStack (InputBuffer _ _ value) =
-      -- Prepent a new clSetKernelArgSto to the stack.
+      -- Prepend a new clSetKernelArgSto to the stack.
       arg kernel $ command kernel argStack value:argStack
 
 instance KernelArgs cl => KernelArgs (OutputBuffer a -> cl) where
     arg kernel argStack (OutputBuffer _ _ mem value) =
-      -- Prepent a new clSetKernelArgSto to the stack.
+      -- Prepend a new clSetKernelArgSto to the stack.
       arg kernel $ command kernel argStack value:argStack
+
+instance KernelArgs cl => KernelArgs (ImageBuffer a -> cl) where
+    arg kernel argStack imgBuffer =
+      -- Prepend a new clSetKernelArgSto to the stack.
+      arg kernel $ command kernel argStack (memLoc imgBuffer):argStack
 
 instance (KernelArgs cl, Storable a) => KernelArgs (a -> cl) where
     arg kernel argStack value =
-      -- Prepent a new clSetKernelArgSto to the stack.
+      -- Prepend a new clSetKernelArgSto to the stack.
       arg kernel $ command kernel argStack value:argStack
 
 command :: Storable a => KernelName -> [OpenCL ()] -> a -> OpenCL ()
