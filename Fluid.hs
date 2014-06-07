@@ -26,17 +26,17 @@ dotProduct vec1 vec2 = do
 
   (usefulImg, kernelOut) <- loop nSteps multOut multipliedImg auxImg
 
-  doMagicToGetImgStuff
+  value <- readPixel kernelOut usefulImg (0, 0, 0)
+  return value
   where
-    loop :: Int
+    loop :: Int -- Current dimension
          -> KernelOutput -- Event to wait for
          -> ImageBuffer CFloat -- Image that contains useful data
          -> ImageBuffer CFloat  -- Image which will contain summed output
          -> OpenCL (ImageBuffer CFloat, KernelOutput)
-    loop 0 kernelOut img _ = return (img, kernelOut)
-    loop steps kernelOut img aux = do
-      enqueueSomeKernels
-      recurseOrSomething
-      return victory
-  
-
+    loop 1 kernelOut img _ = return (img, kernelOut)
+    loop currentWidth kernelOut img aux = do
+      setKernelArgs "sum_step" img aux
+      let dim = currentWidth / 2
+      nextOut <- enqueueKernel "sum_step" [dim, dim, dim] [1, 1, 1] [kernelOut]
+      loop dim nextOut aux img

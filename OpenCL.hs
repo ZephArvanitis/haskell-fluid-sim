@@ -7,7 +7,8 @@ module OpenCL (
     imageHeight    ,
     imageDepth     ,
     imageType ,
-    memLoc    ,
+    imageMemLoc    ,
+    ImageType(..),
 
     Kernel,
     initializeOpenCL,
@@ -16,8 +17,10 @@ module OpenCL (
     inputBuffer,
     outputBuffer,
     runKernel,
+    enqueueKernel,
     readKernelOutput,
     imageBuffer,
+    readPixel,
     OpenCL,
     openCL
   ) where
@@ -57,7 +60,7 @@ data ImageBuffer a = ImageBuffer {
                         imageHeight    :: Int,
                         imageDepth     :: Int,
                         imageType :: ImageType,
-                        memLoc    :: CLMem
+                        imageMemLoc    :: CLMem
                       }
 
 -- OpenCL Info.
@@ -94,7 +97,9 @@ initializeOpenCL :: [FilePath] -> IO OpenCLData
 initializeOpenCL filenames = do
   -- Initialize OpenCL
   (platform:_) <- clGetPlatformIDs
-  (device:_) <- clGetDeviceIDs platform CL_DEVICE_TYPE_ALL
+  -- hardcoding my gpu cpu setup!
+  (cpu:gpu1:gpu2) <- clGetDeviceIDs platform CL_DEVICE_TYPE_ALL
+  let device = gpu1
   context <- clCreateContext [CL_CONTEXT_PLATFORM platform] [device] putStrLn
   queue <- clCreateCommandQueue context device []
   let cl = OpenCLData {
@@ -154,7 +159,7 @@ imageBuffer width height depth imageType generator = do
       imageHeight = height,
       imageDepth = depth,
       imageType = imageType,
-      memLoc = memLoc
+      imageMemLoc = memLoc
     }
 
 sourceKernels :: OpenCLData -> FilePath -> IO [(String, Kernel)]
@@ -170,13 +175,13 @@ sourceKernels cl file = do
   return $ zip names $ map Kernel kernels
 
 runKernel :: KernelName -> [Int] -> [Int] -> OpenCL KernelOutput
-runKernel kernelName global local  = runKernelWithDependencies kernelName global local []
+runKernel kernelName global local  = enqueueKernel kernelName global local []
 
-runKernelWithDependencies :: KernelName -> [Int] -> [Int] -> [KernelOutput] -> OpenCL KernelOutput
-runKernelWithDependencies kernelName global local outputs = do
+enqueueKernel :: KernelName -> [Int] -> [Int] -> [KernelOutput] -> OpenCL KernelOutput
+enqueueKernel kernelName global local outputs = do
   cl <- get
   let Just (Kernel kernel) = Map.lookup kernelName (clKernels cl)
-      events = map outputEvent output
+      events = map outputEvent outputs
   eventExec <- liftIO $ clEnqueueNDRangeKernel (clQueue cl) kernel global local events
   return $ KernelOutput eventExec
 
@@ -186,6 +191,18 @@ readKernelOutput (KernelOutput exec) (OutputBuffer nels size arr mem) = do
   liftIO $ do
     clEnqueueReadBuffer (clQueue cl) mem True 0 size (castPtr arr) [exec]
     peekArray nels arr
+
+-- The forall is requied for scoped type variables
+readPixel :: forall a. Storable a => KernelOutput -> ImageBuffer a -> (Int, Int, Int) -> OpenCL (KernelOutput, a)
+readPixel (KernelOutput output) image (x, y, z) = do
+  queue <- gets clQueue
+  let blocking = True
+      size = sizeOf (undefined :: a)
+  liftIO $ allocaBytes size $ \ptr -> do
+    event <- clEnqueueReadImage queue (imageMemLoc image) blocking (x, y, z) (1, 1, 1) 0 0  ptr [output]
+    contents <- head <$> peekArray 1 (castPtr ptr)
+    return (KernelOutput event, contents)
+
 
 -- Variadic argument class for setKernelArgs.
 -- The `args` function builds up a list of IO actions, each
@@ -209,7 +226,7 @@ instance KernelArgs cl => KernelArgs (OutputBuffer a -> cl) where
 instance KernelArgs cl => KernelArgs (ImageBuffer a -> cl) where
     arg kernel argStack imgBuffer =
       -- Prepend a new clSetKernelArgSto to the stack.
-      arg kernel $ command kernel argStack (memLoc imgBuffer):argStack
+      arg kernel $ command kernel argStack (imageMemLoc imgBuffer):argStack
 
 instance (KernelArgs cl, Storable a) => KernelArgs (a -> cl) where
     arg kernel argStack value =

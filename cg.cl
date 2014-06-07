@@ -53,7 +53,7 @@ kernel void apply_A(read_only image3d_t v,        // Vector to multiply A by
     int j = get_global_id(1);
     int k = get_global_id(2);
 
-    float output = 0f;
+    float output = 0.0f;
     output += read_f(A_diag, i, j, k) * read_f(v, i, j, k);
 
     output += read_f(A_xplus, i, j, k) * read_f(v, i+1, j, k);
