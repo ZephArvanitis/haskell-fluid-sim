@@ -59,11 +59,11 @@ executable fluid-simulation
                        stm ==2.4.*,
                        timers ==0.2.*,
                        containers ==0.5.*,
-                       lens ==3.9.*,
+                       lens==3.9.*,
                        parsec ==3.1.*,
-                       suspend ==0.1.*,
+                       suspend,
                        JuicyPixels,
                        vector,
-                       transformers,
+                       transformers==0.3.*,
                        split>=0.2
   

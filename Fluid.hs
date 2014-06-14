@@ -1,13 +1,19 @@
 module Fluid where
 
+import Control.Monad
+import Control.Applicative ((<$>))
+
 import OpenCL
+import Foreign.C.Types
+import Data.List (elemIndex)
 
 dotProduct :: ImageBuffer CFloat -> ImageBuffer CFloat -> OpenCL CFloat
 dotProduct vec1 vec2 = do
-  let zeros _ _ _ = 0
+  let zeros _ _ _ = 0 :: CFloat 
       width = imageWidth vec1
       height = imageHeight vec1
       depth = imageDepth vec1
+
   multipliedImg <- imageBuffer width height depth (imageType vec1) zeros
 
   setKernelArgs "elementwise_mult" vec1 vec2 multipliedImg
@@ -15,19 +21,16 @@ dotProduct vec1 vec2 = do
 
   auxImg <- imageBuffer width height depth (imageType vec1) zeros
 
-  when (not $ width == height && width == depth) $
-    fail "Different width, height, depth: " ++ show [width, height, depth]
+  unless (width == height && width == depth) $
+    fail $ "Different width, height, depth: " ++ show [width, height, depth]
 
   let powersOfTwo = map (2^) [1..]
-  when (not $ width `elem` powersOfTwo) $
-    fail "Width not a power of two: " ++ show width
+  unless (width `elem` powersOfTwo) $
+    fail $ "Width not a power of two: " ++ show width
 
-  let Just nSteps = elemIndex width powersOfTwo
+  (usefulImg, kernelOut) <- loop width multOut multipliedImg auxImg
 
-  (usefulImg, kernelOut) <- loop nSteps multOut multipliedImg auxImg
-
-  value <- readPixel kernelOut usefulImg (0, 0, 0)
-  return value
+  snd <$> readPixel kernelOut usefulImg (0, 0, 0)
   where
     loop :: Int -- Current dimension
          -> KernelOutput -- Event to wait for
@@ -37,6 +40,6 @@ dotProduct vec1 vec2 = do
     loop 1 kernelOut img _ = return (img, kernelOut)
     loop currentWidth kernelOut img aux = do
       setKernelArgs "sum_step" img aux
-      let dim = currentWidth / 2
+      let dim = currentWidth `div` 2
       nextOut <- enqueueKernel "sum_step" [dim, dim, dim] [1, 1, 1] [kernelOut]
       loop dim nextOut aux img

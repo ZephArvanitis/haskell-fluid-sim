@@ -6,9 +6,11 @@ static float read_f(
     // Sampler to read from images as 3D arrays.  We clamp to the border color.
     // In order to make the border color true or one, use CL_R; in order to
     // make the border color false or zero, use CL_A.
+    // Using CLK_FILTER_LINEAR is good for interpolation but lousy for
+    // indexing, so we don't want to use it here. No filtering!
     sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
                         CLK_ADDRESS_CLAMP |
-                        CLK_FILTER_LINEAR;
+                        CLK_FILTER_NEAREST;
 
     return read_imagef(vec, sampler, (int4)(x, y, z, 0)).w;
 }

@@ -4,6 +4,8 @@ import Control.Monad.State
 import ObjectParser (name)
 import OpenCL
 
+import Fluid
+
 import Foreign.C.Types
 
 main ::  IO ()
@@ -11,7 +13,9 @@ main = openCL ["cg.cl"] $ do
   let value :: Int -> Int -> Int -> CFloat
       value x y z = fromIntegral x * fromIntegral y * fromIntegral z
   img <- imageBuffer 4 4 4 ImageAlpha value
-  return ()
+  img2 <- imageBuffer 4 4 4 ImageAlpha value
+  result <- dotProduct img img2
+  liftIO $ print result
   --openCL ["marchingCubes.cl"] $ runSimulator loop
 
 loop :: SimulatorT OpenCL ()

@@ -157,7 +157,7 @@ loadTexture filename = do
           -- Generate the texture
           GL.texImage2D
             -- No cube map
-            Nothing
+            GL.Texture2D
             -- No proxy
             GL.NoProxy
             -- No mipmaps

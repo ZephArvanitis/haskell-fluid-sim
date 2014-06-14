@@ -22,7 +22,8 @@ module OpenCL (
     imageBuffer,
     readPixel,
     OpenCL,
-    openCL
+    openCL,
+    KernelOutput,
   ) where
 
 import Control.Monad
@@ -130,7 +131,7 @@ outputBuffer size = do
     flags = [CL_MEM_WRITE_ONLY]
     bufsize = size * sizeOf (undefined :: a)
 
-imageBuffer :: Storable a 
+imageBuffer :: (Storable a, Show a)
             => Int                    -- ^ Image width.
             -> Int                    -- ^ Image height.
             -> Int                    -- ^ Image depth.
@@ -151,8 +152,9 @@ imageBuffer width height depth imageType generator = do
                         _ -> error "Expecting Storable CInt8 or CFloat."
         nBytes = width * height * depth * elementSize
     memLoc <- liftIO $ allocaBytes nBytes $ \ptr -> do
-      forM_ [(x, y, z) | x <- [1..width], y <- [1..height], z <- [1..depth]] $ \(x, y, z) ->
-        pokeByteOff ptr (x + width * y + width * height * z) (generator x y z)
+      forM_ [(x, y, z) | x <- [0..width-1], y <- [0..height-1], z <- [0..depth-1]] $ \(x, y, z) -> do
+        let elemOffset = x + width * y + width * height * z
+        pokeByteOff ptr (elementSize * elemOffset) (generator x y z)
       clCreateImage3D context flags imageFmt width height depth 0 0 ptr
     return ImageBuffer {
       imageWidth = width,
