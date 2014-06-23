@@ -17,6 +17,7 @@ module OpenCL (
     inputBuffer,
     outputBuffer,
     runKernel,
+    runSyncKernel,
     enqueueKernel,
     readKernelOutput,
     imageBuffer,
@@ -179,6 +180,12 @@ sourceKernels cl file = do
 runKernel :: KernelName -> [Int] -> [Int] -> OpenCL KernelOutput
 runKernel kernelName global local  = enqueueKernel kernelName global local []
 
+runSyncKernel :: KernelName -> [Int] -> [Int] -> OpenCL ()
+runSyncKernel kernelName global local  = do
+  KernelOutput event <- runKernel kernelName global local
+  queue <- gets clQueue
+  liftIO $ clEnqueueWaitForEvents queue [event]
+
 enqueueKernel :: KernelName -> [Int] -> [Int] -> [KernelOutput] -> OpenCL KernelOutput
 enqueueKernel kernelName global local outputs = do
   cl <- get
@@ -195,15 +202,14 @@ readKernelOutput (KernelOutput exec) (OutputBuffer nels size arr mem) = do
     peekArray nels arr
 
 -- The forall is requied for scoped type variables
-readPixel :: forall a. Storable a => KernelOutput -> ImageBuffer a -> (Int, Int, Int) -> OpenCL (KernelOutput, a)
-readPixel (KernelOutput output) image (x, y, z) = do
+readPixel :: forall a. Storable a => [KernelOutput] -> ImageBuffer a -> (Int, Int, Int) -> OpenCL a
+readPixel outs image (x, y, z) = do
   queue <- gets clQueue
   let blocking = True
       size = sizeOf (undefined :: a)
   liftIO $ allocaBytes size $ \ptr -> do
-    event <- clEnqueueReadImage queue (imageMemLoc image) blocking (x, y, z) (1, 1, 1) 0 0  ptr [output]
-    contents <- head <$> peekArray 1 (castPtr ptr)
-    return (KernelOutput event, contents)
+    event <- clEnqueueReadImage queue (imageMemLoc image) blocking (x, y, z) (1, 1, 1) 0 0  ptr $ map outputEvent outs
+    head <$> peekArray 1 (castPtr ptr)
 
 
 -- Variadic argument class for setKernelArgs.
