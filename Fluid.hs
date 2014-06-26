@@ -16,6 +16,14 @@ data FluidCellMatrix = FluidCellMatrix { diag :: FluidVector
 
 type FluidVector = ImageBuffer CFloat
 
+bodyForces :: FluidVector -> OpenCL FluidVector
+bodyForces v1 = do
+  out <- zerosWithShapeOf v1
+  setKernelArgs "body_forces" v1 out
+
+  runSyncImageKernel "body_forces" v1
+  return out
+
 conjugateGradient :: FluidCellMatrix -> FluidVector -> OpenCL FluidVector
 conjugateGradient matrixA vecB = do 
   let r0 = vecB
@@ -41,10 +49,7 @@ addVec v1 v2 scale = do
   out <- zerosWithShapeOf v1
   setKernelArgs "add_vec" v1 v2 scale out
 
-  let width = imageWidth v1
-      height = imageHeight v1
-      depth = imageDepth v1
-  runSyncKernel "add_vec" [width, height, depth] [1, 1, 1]
+  runSyncImageKernel "add_vec" v1
   return out
 
 applyA :: FluidCellMatrix -> FluidVector -> OpenCL FluidVector
@@ -52,10 +57,7 @@ applyA FluidCellMatrix{..} v = do
   out <- zerosWithShapeOf v
   setKernelArgs "apply_A" v diag xplus yplus zplus out
 
-  let width = imageWidth v
-      height = imageHeight v
-      depth = imageDepth v
-  runSyncKernel "apply_A" [width, height, depth] [1, 1, 1]
+  runSyncImageKernel "apply_A" v
   return out
 
 converge :: FluidVector -> OpenCL Bool
@@ -108,3 +110,10 @@ dotProduct vec1 vec2 = do
       let dim = currentWidth `div` 2
       nextOut <- enqueueKernel "sum_step" [dim, dim, dim] [1, 1, 1] [kernelOut]
       loop dim nextOut aux img
+
+runSyncImageKernel :: String -> FluidVector -> OpenCL ()
+runSyncImageKernel kernel img = runSyncKernel kernel [width, height, depth] [1, 1, 1]
+  where
+    width = imageWidth img
+    height = imageHeight img
+    depth = imageDepth img
