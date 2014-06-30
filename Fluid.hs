@@ -8,33 +8,98 @@ import OpenCL
 import Foreign.C.Types
 import Data.List (elemIndex)
 
-data FluidCellMatrix = FluidCellMatrix { diag :: FluidVector
+data FluidCellSystem = FluidCellSystem { diag :: FluidVector
                                        , xplus :: FluidVector
                                        , yplus :: FluidVector
                                        , zplus :: FluidVector
+                                       , rhs :: FluidVector
                                        }
 
+data FluidState = FluidState { xVels :: FluidVector
+                             , yVels :: FluidVector
+                             , zVels :: FluidVector
+                             , pressures :: FluidVector
+                             , isSolid :: FluidVector
+                             }
+data VectorComponent = X | Y | Z
+
 type FluidVector = ImageBuffer CFloat
+
+simulateStep :: FluidState -> OpenCL FluidState
+simulateStep state@FluidState{..} = do
+  -- Advect each component of velocity individually
+  xVels' <- advect state X
+  yVels' <- advect state Y
+  zVels' <- advect state Z
+
+  -- Apply body forces (currently just gravity)
+  zVels' <- bodyForces zVels'
+
+  -- Find pressures that keep velocities divergence-free
+  let state' = state {
+      xVels = xVels',
+      yVels = yVels',
+      zVels = zVels'
+  }
+  system <- computeSystem state'
+  pressures' <- conjugateGradient system
+
+  -- Update velocities using new pressures
+  updateVelocity state' { pressures = pressures' }
+
+advect :: FluidState -> VectorComponent -> OpenCL FluidVector
+advect FluidState{..} component = do
+  let outVelShape = 
+        case component of
+          X -> xVels
+          Y -> yVels
+          Z -> zVels
+      componentInt =
+        case component of
+          X -> 0
+          Y -> 1
+          Z -> 2
+  out <- zerosWithShapeOf outVelShape
+  setKernelArgs "advect" componentInt xVels yVels zVels out
+  runSyncImageKernel "advect" outVelShape
+  return out
 
 bodyForces :: FluidVector -> OpenCL FluidVector
 bodyForces v1 = do
   out <- zerosWithShapeOf v1
   setKernelArgs "body_forces" v1 out
-
   runSyncImageKernel "body_forces" v1
   return out
 
-conjugateGradient :: FluidCellMatrix -> FluidVector -> OpenCL FluidVector
-conjugateGradient matrixA vecB = do 
-  let r0 = vecB
+computeSystem :: FluidState -> OpenCL FluidCellSystem
+computeSystem FluidState{..} = do
+  isAir <- zerosWithShapeOf pressures
+  setKernelArgs "is_air" pressures isAir
+  runSyncImageKernel "is_air" pressures
+
+  [rhs, diag, xplus, yplus, zplus] <- replicateM 5 $ zerosWithShapeOf pressures
+  setKernelArgs "set_up_system" xVels yVels zVels isSolid isAir rhs diag xplus yplus zplus
+  runSyncImageKernel "set_up_system" pressures
+  return FluidCellSystem { diag = diag
+                         , xplus = xplus
+                         , yplus = yplus
+                         , zplus = zplus
+                         , rhs = rhs
+                         }
+
+
+
+conjugateGradient :: FluidCellSystem -> OpenCL FluidVector
+conjugateGradient system = do 
+  let r0 = rhs system
       p0 = r0
-  x0 <- zerosWithShapeOf vecB
+  x0 <- zerosWithShapeOf r0
   loop r0 p0 x0
   where 
     loop r p x = do
-      alpha <- liftM2 (/) (dotProduct r r) (applyA matrixA p >>= dotProduct p)
+      alpha <- liftM2 (/) (dotProduct r r) (applyA system p >>= dotProduct p)
       x' <- addVec x p alpha
-      ap <- applyA matrixA p
+      ap <- applyA system p
       r' <- addVec r ap (-alpha)
       didConverge <- converge r'
       if didConverge 
@@ -52,8 +117,8 @@ addVec v1 v2 scale = do
   runSyncImageKernel "add_vec" v1
   return out
 
-applyA :: FluidCellMatrix -> FluidVector -> OpenCL FluidVector
-applyA FluidCellMatrix{..} v = do
+applyA :: FluidCellSystem -> FluidVector -> OpenCL FluidVector
+applyA FluidCellSystem{..} v = do
   out <- zerosWithShapeOf v
   setKernelArgs "apply_A" v diag xplus yplus zplus out
 

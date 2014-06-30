@@ -17,6 +17,10 @@ static float dt = 0.01; // seconds
 
 static float cell_width = 1; // arbitrary units (cell units)
 
+static float rho = 0.1; // (units ???)
+
+static float pressure_threshold = 0.1;
+
 
 /*** Grid location and index conversion functions ***/
 
@@ -70,6 +74,19 @@ static bool read_b(
     return read_imagei(vec, sampler, (int4)(x, y, z, 0)).w;
 }
 
+static float read_clamped(
+    read_only  image3d_t vec,
+    int x, int y, int z) {
+
+    // We clamp to the border color. In order to make the border color true, use CL_R;
+    // in order to make the border color false, use CL_A.
+    sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
+                        CLK_ADDRESS_CLAMP |
+                        CLK_FILTER_LINEAR;
+
+    return read_imagef(vec, sampler, (int4)(x, y, z, 0)).w;
+}
+
 static void write_out(
     write_only  image3d_t img,
     float value) {
@@ -85,7 +102,6 @@ static void write_out(
 
 // Semi-Lagrangian advection step of the simulation.
 kernel void advect(
-        int n,                             // Side length of the cube grid.
         component comp,                    // Which component to advect.
         read_only  image3d_t vx,           // X-coordinate velocities on faces (n+1 on each side)
         read_only  image3d_t vy,           // Y-coordinate velocities
@@ -150,8 +166,7 @@ kernel void body_forces(
 }
 
 // Project
-kernel void project(
-        int n,                             // Side length of the cube grid.
+kernel void set_up_system(
         read_only  image3d_t vx,           // X-coordinate velocities on faces (n+1 on each side)
         read_only  image3d_t vy,           // Y-coordinate velocities
         read_only  image3d_t vz,           // Z-coordinate velocities
@@ -226,4 +241,49 @@ kernel void project(
     write_out(A_xplus_mem, A_xplus);
     write_out(A_yplus_mem, A_yplus);
     write_out(A_zplus_mem, A_zplus);
+}
+
+kernel void update_velocities_with_pressure(
+        read_only  image3d_t vx,           // X-coordinate velocities on faces (n+1 on each side)
+        read_only  image3d_t vy,           // Y-coordinate velocities
+        read_only  image3d_t vz,           // Z-coordinate velocities
+        read_only  image3d_t pressures,    // Pressures (stored in center of grid);
+                                           // should be of type CL_A to make off-grid cells have pressure zero.
+        write_only image3d_t vx_new,       // Updated velocities
+        write_only image3d_t vy_new,
+        write_only image3d_t vz_new
+        ) {
+    int i = get_global_id(0);
+    int j = get_global_id(1);
+    int k = get_global_id(2);
+
+    // Get old velocities
+    float xvel = read_v(vx, (float3)(i, j, k));
+    float yvel = read_v(vy, (float3)(i, j, k));
+    float zvel = read_v(vz, (float3)(i, j, k));
+
+    // Get pressure gradient
+    float3 grad;
+    float center_pressure = read_clamped(pressures, i, j, k);
+    grad.x = read_clamped(pressures, i - 1, j, k) - center_pressure;
+    grad.y = read_clamped(pressures, i, j - 1, k) - center_pressure;
+    grad.z = read_clamped(pressures, i, j, k - 1) - center_pressure;
+
+    // Write incremented velocities to output
+    float scale = dt / cell_width / rho;
+    write_out(vx_new, xvel - scale * grad.x);
+    write_out(vy_new, yvel - scale * grad.y);
+    write_out(vz_new, zvel - scale * grad.z);
+}
+
+kernel void is_air(
+        read_only  image3d_t pressure,
+        write_only image3d_t is_air
+        ) {
+    int i = get_global_id(0);
+    int j = get_global_id(1);
+    int k = get_global_id(2);
+
+    float cell_pressure = read_clamped(pressure, i, j, k);
+    write_out(is_air, cell_pressure > pressure_threshold ? 0 : 1);
 }
