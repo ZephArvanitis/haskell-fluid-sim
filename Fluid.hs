@@ -25,6 +25,13 @@ data VectorComponent = X | Y | Z
 
 type FluidVector = ImageBuffer CFloat
 
+initializeFluid :: OpenCL FluidState
+initializeFluid = undefined
+
+populateMarchingCubesGrid :: InputBuffer CFloat -> FluidState -> OpenCL ()
+populateMarchingCubesGrid = undefined
+
+
 simulateStep :: FluidState -> OpenCL FluidState
 simulateStep state@FluidState{..} = do
   -- Advect each component of velocity individually
@@ -49,14 +56,10 @@ simulateStep state@FluidState{..} = do
 
 advect :: FluidState -> VectorComponent -> OpenCL FluidVector
 advect FluidState{..} component = do
-  let outVelShape = 
-        case component of
-          X -> xVels
-          Y -> yVels
-          Z -> zVels
+  let outVelShape = xVels
       componentInt =
         case component of
-          X -> 0
+          X -> 0 :: CInt
           Y -> 1
           Z -> 2
   out <- zerosWithShapeOf outVelShape
@@ -70,6 +73,17 @@ bodyForces v1 = do
   setKernelArgs "body_forces" v1 out
   runSyncImageKernel "body_forces" v1
   return out
+
+updateVelocity :: FluidState -> OpenCL FluidState
+updateVelocity state@FluidState{..} = do
+  [vx', vy', vz'] <- replicateM 3 $ zerosWithShapeOf xVels
+  setKernelArgs "update_velocities_with_pressure" xVels yVels zVels pressures vx' vy' vz'
+  runSyncImageKernel "update_velocities_with_pressure" xVels
+  return state {
+    xVels = vx',
+    yVels = vy',
+    zVels = vz'
+  }
 
 computeSystem :: FluidState -> OpenCL FluidCellSystem
 computeSystem FluidState{..} = do
@@ -86,7 +100,6 @@ computeSystem FluidState{..} = do
                          , zplus = zplus
                          , rhs = rhs
                          }
-
 
 
 conjugateGradient :: FluidCellSystem -> OpenCL FluidVector

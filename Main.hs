@@ -20,14 +20,14 @@ main = openCL ["cg.cl"] $ do
   xpBuf <- imageBuffer 2 2 2 ImageAlpha $ value xp
   ypBuf <- imageBuffer 2 2 2 ImageAlpha $ value yp
   zpBuf <- imageBuffer 2 2 2 ImageAlpha $ value zp
-  let mat = FluidCellMatrix diagBuf xpBuf ypBuf zpBuf
 
   -- Other vector
   let vec = [[[86, 233], [51, 644]], [[-41, 249], [27, 588]]]
   vecBuf <- imageBuffer 2 2 2 ImageAlpha $ value vec
+  let system = FluidCellSystem diagBuf xpBuf ypBuf zpBuf vecBuf
 
   -- run CG
-  solution <- conjugateGradient mat vecBuf
+  solution <- conjugateGradient system
   forM_ [(x, y, z) | x <- [0, 1], y <- [0, 1], z <- [0, 1]] $ \(x, y, z) -> do
     liftIO $ print (x, y, z)
     readPixel [] solution (x, y, z) >>= liftIO . print
