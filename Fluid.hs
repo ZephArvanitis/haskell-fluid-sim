@@ -26,10 +26,31 @@ data VectorComponent = X | Y | Z
 type FluidVector = ImageBuffer CFloat
 
 initializeFluid :: OpenCL FluidState
-initializeFluid = undefined
+initializeFluid = do 
+  let width = 4
+      zeros _ _ _ = 0
+      solidFunc x y z = 0
+      pressureFunc x y z = if x > 1 && x < 4 && y > 1 && y < 4 && z > 1 && z < 4 
+                           then 1
+                           else 0
+  xVels <- imageBuffer (width + 1) (width + 1) (width + 1) ImageRed zeros
+  yVels <- zerosWithShapeOf xVels
+  zVels <- zerosWithShapeOf xVels
+  isSolid <- imageBuffer width width width ImageAlpha solidFunc
+  pressures <- imageBuffer width width width ImageAlpha pressureFunc
+  return FluidState {
+              xVels = xVels,
+              yVels = yVels,
+              zVels = zVels,
+              pressures = pressures,
+              isSolid = isSolid
+             }
+
 
 populateMarchingCubesGrid :: InputBuffer CFloat -> FluidState -> OpenCL ()
-populateMarchingCubesGrid = undefined
+populateMarchingCubesGrid grid FluidState{..} = do
+  setKernelArgs "populateMarchingCubesGrid" (imageWidth pressures) pressures grid
+  runSyncImageKernel "populateMarchingCubesGrid" pressures
 
 
 simulateStep :: FluidState -> OpenCL FluidState

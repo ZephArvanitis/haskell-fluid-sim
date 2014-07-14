@@ -69,7 +69,7 @@ static bool read_b(
     // in order to make the border color false, use CL_A.
     sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
                         CLK_ADDRESS_CLAMP |
-                        CLK_FILTER_LINEAR;
+                        CLK_FILTER_NEAREST;
 
     return read_imagei(vec, sampler, (int4)(x, y, z, 0)).w;
 }
@@ -82,7 +82,7 @@ static float read_clamped(
     // in order to make the border color false, use CL_A.
     sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
                         CLK_ADDRESS_CLAMP |
-                        CLK_FILTER_LINEAR;
+                        CLK_FILTER_NEAREST;
 
     return read_imagef(vec, sampler, (int4)(x, y, z, 0)).w;
 }

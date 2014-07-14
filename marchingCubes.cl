@@ -794,3 +794,21 @@ kernel void vertexPositions(
 
     pos[get_global_id(0)] = loc;
 }
+
+// Convert a image into a marching cubes compatible array of floats
+kernel void populateMarchingCubesGrid(
+        int n,                            // Width of the grid (assumed to be a cube)
+        read_only image3d_t fluidVector,  // Input image
+        float* grid                       // output
+        ) {
+    int i = get_global_id(0);
+    int j = get_global_id(1);
+    int k = get_global_id(2);
+    int index = gridIndex(int3(i, j, k), n);
+    // Get the pressure out of the image
+    sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
+                        CLK_ADDRESS_CLAMP_TO_EDGE |
+                        CLK_FILTER_NEAREST;
+
+    grid[index] = read_imagef(fluidVector, sampler, (float4)(i, j, k, 0)).w;
+}

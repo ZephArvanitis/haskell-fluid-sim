@@ -9,7 +9,22 @@ import Fluid
 import Foreign.C.Types
 
 main ::  IO ()
-main = openCL ["cg.cl"] $ do
+main = openCL ["cg.cl", "marchingCubes.cl", "simulation.cl"] $ do
+  -- Initialize
+  state <- initializeFluidState
+  -- Run some stuff
+  newState <- simulateStep state
+  -- Show some output
+  showableState <- 
+
+
+
+
+
+
+
+auxFunc :: IO ()
+auxFunc = openCL ["cg.cl"] $ do
   -- our A matrix
   let diag = [[[1, 5], [3, 7]], [[2, 6], [4, 8]]]
       xp = [[[11, 15], [13, 17]], [[12, 16], [14, 18]]]
