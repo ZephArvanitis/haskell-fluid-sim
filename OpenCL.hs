@@ -100,8 +100,8 @@ initializeOpenCL filenames = do
   -- Initialize OpenCL
   (platform:_) <- clGetPlatformIDs
   -- hardcoding my gpu cpu setup!
-  (cpu:gpu1:gpu2:[]) <- clGetDeviceIDs platform CL_DEVICE_TYPE_ALL
-  let device = gpu1
+  devices <- clGetDeviceIDs platform CL_DEVICE_TYPE_ALL
+  let device = head devices
   context <- clCreateContext [CL_CONTEXT_PLATFORM platform] [device] putStrLn
   queue <- clCreateCommandQueue context device []
   let cl = OpenCLData {
@@ -144,8 +144,8 @@ imageBuffer width height depth imageType generator = do
     let flags = [CL_MEM_READ_WRITE, CL_MEM_ALLOC_HOST_PTR, CL_MEM_COPY_HOST_PTR]
         imageFmt = CLImageFormat order channelType
         order = case imageType of
-                  ImageRed -> CL_R
-                  ImageAlpha -> CL_A
+                  ImageRed -> CL_INTENSITY
+                  ImageAlpha -> CL_INTENSITY
         elementSize = sizeOf (generator undefined undefined undefined)
         channelType = case elementSize of
                         1 -> CL_UNSIGNED_INT8
