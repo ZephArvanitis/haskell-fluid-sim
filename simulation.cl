@@ -6,20 +6,20 @@ typedef uchar component;
 
 // Indexed by component. Figure out how much to shift from the middle of its
 // cube to get to the position of velocity component.
-static float3 grid_shifts[3] = {
+static float3 constant grid_shifts[3] = {
     (float3)(-0.5, 0.0, 0.0),
     (float3)(0.0, -0.5, 0.0),
     (float3)(0.0, 0.0, -0.5)
 };
 
 // Time step of the simulation
-static float dt = 0.01; // seconds
+static float constant dt = 0.01; // seconds
 
-static float cell_width = 1; // arbitrary units (cell units)
+static float constant cell_width = 1; // arbitrary units (cell units)
 
-static float rho = 0.1; // (units ???)
+static float constant rho = 0.1; // (units ???)
 
-static float pressure_threshold = 0.1;
+static float constant pressure_threshold = 0.1;
 
 
 /*** Grid location and index conversion functions ***/
@@ -38,9 +38,9 @@ static float3 velocity(
                         CLK_FILTER_LINEAR;
 
     float3 vel;
-    vel.x = read_imagef(v, sampler, (float4)(pos.x + 0.5, pos.y, pos.z, 0)).w;
-    vel.y = read_imagef(v, sampler, (float4)(pos.x, pos.y + 0.5, pos.z, 0)).w;
-    vel.z = read_imagef(v, sampler, (float4)(pos.x, pos.y, pos.z + 0.5, 0)).w;
+    vel.x = read_imagef(vx, sampler, (float4)(pos.x + 0.5, pos.y, pos.z, 0)).w;
+    vel.y = read_imagef(vy, sampler, (float4)(pos.x, pos.y + 0.5, pos.z, 0)).w;
+    vel.z = read_imagef(vz, sampler, (float4)(pos.x, pos.y, pos.z + 0.5, 0)).w;
     return vel;
 }
 
@@ -120,7 +120,7 @@ kernel void advect(
     float3 vel = velocity(vx, vy, vz, x);
  
     // 3. Find x_mid (middle point for RK2).
-    float3 x_mid = x - 0.5 * dt * vel;
+    float3 x_mid = x - 0.5f * dt * vel;
 
     // 4. Evaluate velocity at x_mid via interpolation.
     float3 vel_mid = velocity(vx, vy, vz, x_mid);
@@ -159,7 +159,7 @@ kernel void body_forces(
     int k = get_global_id(2);
 
     // Get the z velocity
-    float vel = read_v(vz, (float3)(i, j, k));
+    float vel = read_v(vz, (float3)(i, j, k)).z;
 
     // And write the output
     write_out(new_vz, vel + gravity * dt);
@@ -186,12 +186,12 @@ kernel void set_up_system(
 
     // Compute b (divergences + modifications for boundaries ??)
     // Use finite differences for divergence
-    float xminus = read_v(vx, (float3)(i, j, k));
-    float yminus = read_v(vy, (float3)(i, j, k));
-    float zminus = read_v(vz, (float3)(i, j, k));
-    float xplus  = read_v(vx, (float3)(i + 1, j, k));
-    float yplus  = read_v(vy, (float3)(i, j + 1, k));
-    float zplus  = read_v(vz, (float3)(i, j, k + 1));
+    float xminus = read_v(vx, (float3)(i, j, k)).x;
+    float yminus = read_v(vy, (float3)(i, j, k)).y;
+    float zminus = read_v(vz, (float3)(i, j, k)).z;
+    float xplus  = read_v(vx, (float3)(i + 1, j, k)).x;
+    float yplus  = read_v(vy, (float3)(i, j + 1, k)).y;
+    float zplus  = read_v(vz, (float3)(i, j, k + 1)).z;
 
     float dx = xplus - xminus;
     float dy = yplus - yminus;
@@ -230,7 +230,7 @@ kernel void set_up_system(
 
     b /= cell_width;
 
-    float A_scale = dt / (fluid_density * cell_width * cell_width);
+    float A_scale = dt / (rho * cell_width * cell_width);
     int A_diag  = A_scale * (6 - num_solid);
     int A_xplus = read_b(is_air, i + 1, j, k) || xplus_solid ? 0 : -A_scale;
     int A_yplus = read_b(is_air, i, j + 1, k) || yplus_solid ? 0 : -A_scale;
@@ -258,9 +258,7 @@ kernel void update_velocities_with_pressure(
     int k = get_global_id(2);
 
     // Get old velocities
-    float xvel = read_v(vx, (float3)(i, j, k));
-    float yvel = read_v(vy, (float3)(i, j, k));
-    float zvel = read_v(vz, (float3)(i, j, k));
+    float3 vel = read_v(vx, (float3)(i, j, k));
 
     // Get pressure gradient
     float3 grad;
@@ -271,9 +269,9 @@ kernel void update_velocities_with_pressure(
 
     // Write incremented velocities to output
     float scale = dt / cell_width / rho;
-    write_out(vx_new, xvel - scale * grad.x);
-    write_out(vy_new, yvel - scale * grad.y);
-    write_out(vz_new, zvel - scale * grad.z);
+    write_out(vx_new, vel.x - scale * grad.x);
+    write_out(vy_new, vel.y - scale * grad.y);
+    write_out(vz_new, vel.z - scale * grad.z);
 }
 
 kernel void is_air(

@@ -100,7 +100,7 @@ initializeOpenCL filenames = do
   -- Initialize OpenCL
   (platform:_) <- clGetPlatformIDs
   -- hardcoding my gpu cpu setup!
-  (cpu:gpu1:gpu2) <- clGetDeviceIDs platform CL_DEVICE_TYPE_ALL
+  (cpu:gpu1:gpu2:[]) <- clGetDeviceIDs platform CL_DEVICE_TYPE_ALL
   let device = gpu1
   context <- clCreateContext [CL_CONTEXT_PLATFORM platform] [device] putStrLn
   queue <- clCreateCommandQueue context device []

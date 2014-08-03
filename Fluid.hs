@@ -3,6 +3,8 @@ module Fluid where
 
 import Control.Monad
 import Control.Applicative ((<$>))
+import Control.Monad.IO.Class
+import System.Exit
 
 import OpenCL
 import Foreign.C.Types
@@ -25,10 +27,9 @@ data VectorComponent = X | Y | Z
 
 type FluidVector = ImageBuffer CFloat
 
-initializeFluid :: OpenCL FluidState
-initializeFluid = do 
-  let width = 4
-      zeros _ _ _ = 0
+initializeFluid :: Int -> OpenCL FluidState
+initializeFluid width = do 
+  let zeros _ _ _ = 0
       solidFunc x y z = 0
       pressureFunc x y z = if x > 1 && x < 4 && y > 1 && y < 4 && z > 1 && z < 4 
                            then 1
@@ -49,6 +50,7 @@ initializeFluid = do
 
 populateMarchingCubesGrid :: InputBuffer CFloat -> FluidState -> OpenCL ()
 populateMarchingCubesGrid grid FluidState{..} = do
+  printFluidVector pressures
   setKernelArgs "populateMarchingCubesGrid" (imageWidth pressures) pressures grid
   runSyncImageKernel "populateMarchingCubesGrid" pressures
 
@@ -57,11 +59,15 @@ simulateStep :: FluidState -> OpenCL FluidState
 simulateStep state@FluidState{..} = do
   -- Advect each component of velocity individually
   xVels' <- advect state X
+  liftIO $ print "x"
   yVels' <- advect state Y
+  liftIO $ print "y"
   zVels' <- advect state Z
+  liftIO $ print "z"
 
   -- Apply body forces (currently just gravity)
   zVels' <- bodyForces zVels'
+  liftIO $ print "those body forces"
 
   -- Find pressures that keep velocities divergence-free
   let state' = state {
@@ -70,10 +76,14 @@ simulateStep state@FluidState{..} = do
       zVels = zVels'
   }
   system <- computeSystem state'
+  liftIO $ print "system has been programmed"
   pressures' <- conjugateGradient system
+  liftIO $ print "and gradiented"
 
   -- Update velocities using new pressures
-  updateVelocity state' { pressures = pressures' }
+  x <- updateVelocity state' { pressures = pressures' }
+  liftIO $ print "vel ++"
+  return x
 
 advect :: FluidState -> VectorComponent -> OpenCL FluidVector
 advect FluidState{..} component = do
@@ -128,13 +138,18 @@ conjugateGradient system = do
   let r0 = rhs system
       p0 = r0
   x0 <- zerosWithShapeOf r0
-  loop r0 p0 x0
+  didConverge <- converge r0
+  if didConverge
+  then return x0
+  else loop r0 p0 x0
   where 
     loop r p x = do
       alpha <- liftM2 (/) (dotProduct r r) (applyA system p >>= dotProduct p)
       x' <- addVec x p alpha
       ap <- applyA system p
       r' <- addVec r ap (-alpha)
+      liftIO $ print alpha
+      liftIO $ exitSuccess
       didConverge <- converge r'
       if didConverge 
       then return x'
@@ -216,3 +231,11 @@ runSyncImageKernel kernel img = runSyncKernel kernel [width, height, depth] [1, 
     width = imageWidth img
     height = imageHeight img
     depth = imageDepth img
+
+printFluidVector :: FluidVector -> OpenCL ()
+printFluidVector vec =
+  forM_ [0..imageWidth vec-1] $ \x -> 
+    forM_ [0..imageWidth vec-1] $ \y -> 
+      forM_ [0..imageWidth vec-1] $ \z -> do
+        value <- readPixel [] vec (x, y, z)
+        liftIO $ putStrLn $ show (x, y, z) ++ " " ++ show value

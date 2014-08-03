@@ -1,7 +1,8 @@
+import System.Exit
 import Simulator
 import MarchingCubes
 import Control.Monad.State
-import ObjectParser (name)
+import ObjectParser (name, Mesh)
 import OpenCL
 
 import Fluid
@@ -9,19 +10,21 @@ import Fluid
 import Foreign.C.Types
 
 main ::  IO ()
-main = openCL ["cg.cl", "marchingCubes.cl", "simulation.cl"] $ do
+main = openCL ["cg.cl", "marchingCubes.cl", "simulation.cl"] $ runSimulator $ do
   -- Initialize
-  state <- initializeFluidState
-  -- Run some stuff
-  newState <- simulateStep state
-  -- Show some output
-  showableState <- 
+  let n = 4
+  mesh <- lift $ do
+    state <- initializeFluid n
+    grid <- inputBuffer $ replicate (n^3) 0
 
+    -- Run some stuff
+    newState <- simulateStep state
 
+    -- Show some output
+    populateMarchingCubesGrid grid newState
+    makeMesh n grid
 
-
-
-
+  showMesh mesh
 
 auxFunc :: IO ()
 auxFunc = openCL ["cg.cl"] $ do
@@ -49,6 +52,23 @@ auxFunc = openCL ["cg.cl"] $ do
 
   --openCL ["marchingCubes.cl"] $ runSimulator loop
 
+showMesh :: Mesh -> SimulatorT OpenCL ()
+showMesh mesh = do
+  running <- Simulator.isRunning
+  when running $ do
+    Simulator.waitForNextFrame
+    Simulator.update
+
+    paused <- Simulator.isPaused
+    unless paused updateSimulation
+
+    addMesh mesh
+    Simulator.draw
+    deleteMesh $ name mesh
+
+    showMesh mesh
+
+{-
 loop :: SimulatorT OpenCL ()
 loop = do
   running <- Simulator.isRunning
@@ -65,6 +85,6 @@ loop = do
     deleteMesh $ name mesh
 
     loop
-
+-}
 updateSimulation :: Monad m => SimulatorT m ()
 updateSimulation = return ()

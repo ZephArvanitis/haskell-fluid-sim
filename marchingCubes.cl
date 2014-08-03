@@ -799,7 +799,7 @@ kernel void vertexPositions(
 kernel void populateMarchingCubesGrid(
         int n,                            // Width of the grid (assumed to be a cube)
         read_only image3d_t fluidVector,  // Input image
-        float* grid                       // output
+        global float* grid                // output
         ) {
     int i = get_global_id(0);
     int j = get_global_id(1);
