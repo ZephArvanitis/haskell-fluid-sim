@@ -1,7 +1,15 @@
 // Single-component float image read function
 static float read_f(
     read_only  image3d_t vec,
-    int x, int y, int z) {
+    int x, int y, int z, float border) {
+
+    // Get image dimensions
+    int4 size = get_image_dim(vec);
+    if (x < 0 || x >= size.x ||
+        y < 0 || y >= size.y ||
+        z < 0 || z >= size.z) {
+        return border;
+    }
 
     // Sampler to read from images as 3D arrays.  We clamp to the border color.
     // In order to make the border color true or one, use CL_R; in order to
@@ -23,7 +31,7 @@ static void write_out(
     int j = get_global_id(1);
     int k = get_global_id(2);
 
-    write_imagef(img, (int4)(i, j, k, 0), (float4)(0, 0, 0, value));
+    write_imagef(img, (int4)(i, j, k, 0), (float4)(value, value, value, value));
 }
 
 kernel void add_vec(read_only image3d_t v1,     // First vector
@@ -35,8 +43,8 @@ kernel void add_vec(read_only image3d_t v1,     // First vector
     int j = get_global_id(1);
     int k = get_global_id(2);
 
-    float v1_comp = read_f(v1, i, j, k);
-    float v2_comp = read_f(v2, i, j, k);
+    float v1_comp = read_f(v1, i, j, k, 0);
+    float v2_comp = read_f(v2, i, j, k, 0);
 
     write_out(out, v1_comp + scale * v2_comp);
 }
@@ -56,16 +64,16 @@ kernel void apply_A(read_only image3d_t v,        // Vector to multiply A by
     int k = get_global_id(2);
 
     float output = 0.0f;
-    output += read_f(A_diag, i, j, k) * read_f(v, i, j, k);
+    output += read_f(A_diag, i, j, k, 0.0) * read_f(v, i, j, k, 0.0);
 
-    output += read_f(A_xplus, i, j, k) * read_f(v, i+1, j, k);
-    output += read_f(A_xplus, i-1, j, k) * read_f(v, i-1, j, k);
+    output += read_f(A_xplus, i, j, k, 0.0) * read_f(v, i+1, j, k, 0.0);
+    output += read_f(A_xplus, i-1, j, k, 0.0) * read_f(v, i-1, j, k, 0.0);
 
-    output += read_f(A_yplus, i, j, k) * read_f(v, i, j+1, k);
-    output += read_f(A_yplus, i, j-1, k) * read_f(v, i, j-1, k);
+    output += read_f(A_yplus, i, j, k, 0.0) * read_f(v, i, j+1, k, 0.0);
+    output += read_f(A_yplus, i, j-1, k, 0.0) * read_f(v, i, j-1, k, 0.0);
 
-    output += read_f(A_zplus, i, j, k) * read_f(v, i, j, k+1);
-    output += read_f(A_zplus, i, j, k-1) * read_f(v, i, j, k-1);
+    output += read_f(A_zplus, i, j, k, 0.0) * read_f(v, i, j, k+1, 0.0);
+    output += read_f(A_zplus, i, j, k-1, 0.0) * read_f(v, i, j, k-1, 0.0);
 
     write_out(out, output);
 }
@@ -78,7 +86,7 @@ kernel void elementwise_mult(read_only image3d_t v1,        // First  vector in 
     int j = get_global_id(1);
     int k = get_global_id(2);
 
-    write_out(out, read_f(v1, i, j, k) * read_f(v2, i, j, k));
+    write_out(out, read_f(v1, i, j, k, 0.0) * read_f(v2, i, j, k, 0.0));
 }
 
 // Only valid for 2^n width grids. (...for integer n. Whole n, even! Also odd n.)
@@ -95,14 +103,14 @@ kernel void sum_step(
     int k = get_global_id(2);
 
     float sum = 0;
-    sum += read_f(in, i,             j,             k);
-    sum += read_f(in, i + out_width, j,             k);
-    sum += read_f(in, i,             j + out_width, k);
-    sum += read_f(in, i,             j,             k + out_width);
-    sum += read_f(in, i + out_width, j + out_width, k);
-    sum += read_f(in, i + out_width, j,             k + out_width);
-    sum += read_f(in, i,             j + out_width, k + out_width);
-    sum += read_f(in, i + out_width, j + out_width, k + out_width);
+    sum += read_f(in, i,             j,             k, 0.0);
+    sum += read_f(in, i + out_width, j,             k, 0.0);
+    sum += read_f(in, i,             j + out_width, k, 0.0);
+    sum += read_f(in, i,             j,             k + out_width, 0.0);
+    sum += read_f(in, i + out_width, j + out_width, k, 0.0);
+    sum += read_f(in, i + out_width, j,             k + out_width, 0.0);
+    sum += read_f(in, i,             j + out_width, k + out_width, 0.0);
+    sum += read_f(in, i + out_width, j + out_width, k + out_width, 0.0);
 
     write_out(out, sum);
 }

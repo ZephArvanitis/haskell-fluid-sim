@@ -804,7 +804,8 @@ kernel void populateMarchingCubesGrid(
     int i = get_global_id(0);
     int j = get_global_id(1);
     int k = get_global_id(2);
-    int index = gridIndex(int3(i, j, k), n);
+    int index = gridIndex((int3)(i, j, k), n);
+
     // Get the pressure out of the image
     sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE |
                         CLK_ADDRESS_CLAMP_TO_EDGE |

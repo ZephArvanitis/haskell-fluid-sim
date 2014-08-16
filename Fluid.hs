@@ -31,7 +31,8 @@ initializeFluid :: Int -> OpenCL FluidState
 initializeFluid width = do 
   let zeros _ _ _ = 0
       solidFunc x y z = 0
-      pressureFunc x y z = if x > 1 && x < 4 && y > 1 && y < 4 && z > 1 && z < 4 
+      centered value = value > width `div` 3 && value < (width - width `div` 3)
+      pressureFunc x y z = if centered x && centered y && centered z
                            then 1
                            else 0
   xVels <- imageBuffer (width + 1) (width + 1) (width + 1) ImageRed zeros
@@ -50,7 +51,6 @@ initializeFluid width = do
 
 populateMarchingCubesGrid :: InputBuffer CFloat -> FluidState -> OpenCL ()
 populateMarchingCubesGrid grid FluidState{..} = do
-  printFluidVector pressures
   setKernelArgs "populateMarchingCubesGrid" (imageWidth pressures) pressures grid
   runSyncImageKernel "populateMarchingCubesGrid" pressures
 
@@ -59,15 +59,11 @@ simulateStep :: FluidState -> OpenCL FluidState
 simulateStep state@FluidState{..} = do
   -- Advect each component of velocity individually
   xVels' <- advect state X
-  liftIO $ print "x"
   yVels' <- advect state Y
-  liftIO $ print "y"
   zVels' <- advect state Z
-  liftIO $ print "z"
 
   -- Apply body forces (currently just gravity)
-  zVels' <- bodyForces zVels'
-  liftIO $ print "those body forces"
+  zVels' <- bodyForces pressures isSolid zVels'
 
   -- Find pressures that keep velocities divergence-free
   let state' = state {
@@ -76,13 +72,11 @@ simulateStep state@FluidState{..} = do
       zVels = zVels'
   }
   system <- computeSystem state'
-  liftIO $ print "system has been programmed"
   pressures' <- conjugateGradient system
-  liftIO $ print "and gradiented"
 
   -- Update velocities using new pressures
   x <- updateVelocity state' { pressures = pressures' }
-  liftIO $ print "vel ++"
+  liftIO $ putStrLn "Finished update"
   return x
 
 advect :: FluidState -> VectorComponent -> OpenCL FluidVector
@@ -98,10 +92,14 @@ advect FluidState{..} component = do
   runSyncImageKernel "advect" outVelShape
   return out
 
-bodyForces :: FluidVector -> OpenCL FluidVector
-bodyForces v1 = do
+bodyForces :: FluidVector -> FluidVector -> FluidVector -> OpenCL FluidVector
+bodyForces pressures isSolid v1 = do
+  isAir <- zerosWithShapeOf pressures
+  setKernelArgs "is_air" pressures isAir
+  runSyncImageKernel "is_air" pressures
+
   out <- zerosWithShapeOf v1
-  setKernelArgs "body_forces" v1 out
+  setKernelArgs "body_forces" v1 isSolid isAir out
   runSyncImageKernel "body_forces" v1
   return out
 
@@ -148,12 +146,12 @@ conjugateGradient system = do
       x' <- addVec x p alpha
       ap <- applyA system p
       r' <- addVec r ap (-alpha)
-      liftIO $ print alpha
-      liftIO $ exitSuccess
       didConverge <- converge r'
       if didConverge 
       then return x'
       else do 
+        magnitude <- liftM sqrt (dotProduct r' r')
+        liftIO $ print magnitude
         beta <- liftM2 (/) (dotProduct r' r') (dotProduct r r)
         p' <- addVec r' p beta
         loop r' p' x'
@@ -177,6 +175,7 @@ applyA FluidCellSystem{..} v = do
 converge :: FluidVector -> OpenCL Bool
 converge vec = do
   magnitude <- liftM sqrt (dotProduct vec vec)
+  liftIO $ print magnitude
   return $ magnitude < 0.001
 
 zerosWithShapeOf :: FluidVector -> OpenCL FluidVector

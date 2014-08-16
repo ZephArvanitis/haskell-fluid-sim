@@ -76,13 +76,11 @@ makeMesh n grid = do
   cubeIndicesIn <- outputBuffer nCubes :: OpenCL (OutputBuffer CInt)
   setKernelArgs "numVertices" nC grid nvertsIn cubeIndicesIn
   nvertsOut <- runKernel "numVertices" [nCubes] [1]
-  liftIO $ print "a"
 
   -- Outputs of first kernel: number of vertices in each cube and cube
   -- index of each cube.
   nverts <- readKernelOutput nvertsOut nvertsIn
   cubeIndices <- readKernelOutput nvertsOut cubeIndicesIn
-  liftIO $ print "b"
   
   -- Postprocess the output of the first kernel.  In order to continue, we
   -- need to have several arrays indexed by vertex number (with size equal
@@ -144,27 +142,18 @@ makeMesh n grid = do
   when (all (== 0) nverts) $ liftIO $ do
     putStrLn "No vertices generated"
     exitWith (ExitFailure 1)
-  liftIO $ do
-    print "c"
-    print cubeIds
-    print cubeIndices
-    print vertIds
-    print "stuff"
-    print perCubeData
-    print nverts
+
   let numVerts = length vertIds
   cubeIdInput <- inputBuffer cubeIds
   cubeIndInput <- inputBuffer cubeIndices
   vertIdInput <- inputBuffer vertIds
   startingVertInput <- inputBuffer startingIndices
-  liftIO $ print "d"
 
   globalVertInds <- outputBuffer numVerts :: OpenCL (OutputBuffer CInt)
 
   setKernelArgs "genVerts" nC cubeIdInput cubeIndInput vertIdInput startingVertInput globalVertInds
   genVertsOut <- runKernel "genVerts" [numVerts] [1]
   vertArray <- readKernelOutput genVertsOut globalVertInds >>= (liftIO . toMArray)
-  liftIO $ print "e"
 
   -- Rename vertices to one through k (k = length of unique vertices).
   -- This changes the vertex array in place!

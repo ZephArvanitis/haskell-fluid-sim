@@ -9,6 +9,7 @@ module OpenCL (
     imageType ,
     imageMemLoc    ,
     ImageType(..),
+    readInputBuffer,
 
     Kernel,
     initializeOpenCL,
@@ -200,6 +201,14 @@ readKernelOutput (KernelOutput exec) (OutputBuffer nels size arr mem) = do
   liftIO $ do
     clEnqueueReadBuffer (clQueue cl) mem True 0 size (castPtr arr) [exec]
     peekArray nels arr
+
+readInputBuffer :: Storable a => InputBuffer a -> OpenCL [a]
+readInputBuffer (InputBuffer nels size mem) = do
+  cl <- get
+  liftIO $
+     allocaBytes size $ \ptr -> do
+      clEnqueueReadBuffer (clQueue cl) mem True 0 size (castPtr ptr) []
+      peekArray nels ptr
 
 -- The forall is requied for scoped type variables
 readPixel :: forall a. Storable a => [KernelOutput] -> ImageBuffer a -> (Int, Int, Int) -> OpenCL a

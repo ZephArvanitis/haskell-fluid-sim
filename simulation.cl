@@ -45,7 +45,7 @@ static float3 velocity(
 }
 
 // Single-component velocity function
-static float3 read_v(
+static float read_v(
     read_only  image3d_t v,
     float3 pos) {
 
@@ -62,7 +62,16 @@ static float3 read_v(
 // Single-component boolean image read function
 static bool read_b(
     read_only  image3d_t vec,
-    int x, int y, int z) {
+    int x, int y, int z,
+    bool border) {
+
+    // Get image dimensions
+    int4 size = get_image_dim(vec);
+    if (x < 0 || x >= size.x ||
+        y < 0 || y >= size.y ||
+        z < 0 || z >= size.z) {
+        return border;
+    }
 
     // Sampler to read from images as 3D bool arrays.
     // We clamp to the border color. In order to make the border color true, use CL_R;
@@ -76,7 +85,16 @@ static bool read_b(
 
 static float read_clamped(
     read_only  image3d_t vec,
-    int x, int y, int z) {
+    int x, int y, int z,
+    float border) {
+
+    // Get image dimensions
+    int4 size = get_image_dim(vec);
+    if (x < 0 || x >= size.x ||
+        y < 0 || y >= size.y ||
+        z < 0 || z >= size.z) {
+        return border;
+    }
 
     // We clamp to the border color. In order to make the border color true, use CL_R;
     // in order to make the border color false, use CL_A.
@@ -95,7 +113,7 @@ static void write_out(
     int j = get_global_id(1);
     int k = get_global_id(2);
 
-    write_imagef(img, (int4)(i, j, k, 0), (float4)(0, 0, 0, value));
+    write_imagef(img, (int4)(i, j, k, 0), (float4)(value, value, value, value));
 }
 
 /*** Kernels ***/
@@ -147,6 +165,8 @@ kernel void advect(
 // Deal with body forces. For now, we only use/care about gravity
 kernel void body_forces(
         read_only  image3d_t vz,           // Z-coordinate velocities
+        read_only  image3d_t is_solid,
+        read_only  image3d_t is_air,
         write_only image3d_t new_vz        // Force-affected velocities (output).
         ) {
     
@@ -159,10 +179,15 @@ kernel void body_forces(
     int k = get_global_id(2);
 
     // Get the z velocity
-    float vel = read_v(vz, (float3)(i, j, k)).z;
+    float vel = read_v(vz, (float3)(i, j, k));
+
+    bool solid = read_b(is_solid, i, j, k, false);
+    bool air = read_b(is_air, i, j, k, true);
 
     // And write the output
-    write_out(new_vz, vel + gravity * dt);
+    if (!solid && !air) {
+        write_out(new_vz, vel + gravity * dt);
+    }
 }
 
 // Project
@@ -186,12 +211,12 @@ kernel void set_up_system(
 
     // Compute b (divergences + modifications for boundaries ??)
     // Use finite differences for divergence
-    float xminus = read_v(vx, (float3)(i, j, k)).x;
-    float yminus = read_v(vy, (float3)(i, j, k)).y;
-    float zminus = read_v(vz, (float3)(i, j, k)).z;
-    float xplus  = read_v(vx, (float3)(i + 1, j, k)).x;
-    float yplus  = read_v(vy, (float3)(i, j + 1, k)).y;
-    float zplus  = read_v(vz, (float3)(i, j, k + 1)).z;
+    float xminus = read_v(vx, (float3)(i, j, k));
+    float yminus = read_v(vy, (float3)(i, j, k));
+    float zminus = read_v(vz, (float3)(i, j, k));
+    float xplus  = read_v(vx, (float3)(i + 1, j, k));
+    float yplus  = read_v(vy, (float3)(i, j + 1, k));
+    float zplus  = read_v(vz, (float3)(i, j, k + 1));
 
     float dx = xplus - xminus;
     float dy = yplus - yminus;
@@ -204,27 +229,27 @@ kernel void set_up_system(
     float b = -divergence;
     int num_solid = 0;
     float solid_vel = 0;
-    bool xminus_solid = read_b(is_solid, i - 1, j, k);
+    bool xminus_solid = read_b(is_solid, i - 1, j, k, false);
     b +=  xminus_solid * (xminus - solid_vel);
     num_solid += xminus_solid;
 
-    bool xplus_solid = read_b(is_solid, i + 1, j, k);
+    bool xplus_solid = read_b(is_solid, i + 1, j, k, false);
     b +=  xplus_solid * (xplus  - solid_vel);
     num_solid += xplus_solid;
 
-    bool yminus_solid = read_b(is_solid, i, j - 1, k);
+    bool yminus_solid = read_b(is_solid, i, j - 1, k, false);
     b +=  yminus_solid * (yminus - solid_vel);
     num_solid += yminus_solid;
 
-    bool yplus_solid = read_b(is_solid, i, j + 1, k);
+    bool yplus_solid = read_b(is_solid, i, j + 1, k, false);
     b +=  yplus_solid * (yplus  - solid_vel);
     num_solid += yplus_solid;
 
-    bool zminus_solid = read_b(is_solid, i, j, k - 1);
+    bool zminus_solid = read_b(is_solid, i, j, k - 1, false);
     b +=  zminus_solid * (zminus - solid_vel);
     num_solid += zminus_solid;
 
-    bool zplus_solid = read_b(is_solid, i, j, k + 1);
+    bool zplus_solid = read_b(is_solid, i, j, k + 1, false);
     b +=  zplus_solid * (zplus  - solid_vel);
     num_solid += zplus_solid;
 
@@ -232,9 +257,9 @@ kernel void set_up_system(
 
     float A_scale = dt / (rho * cell_width * cell_width);
     int A_diag  = A_scale * (6 - num_solid);
-    int A_xplus = read_b(is_air, i + 1, j, k) || xplus_solid ? 0 : -A_scale;
-    int A_yplus = read_b(is_air, i, j + 1, k) || yplus_solid ? 0 : -A_scale;
-    int A_zplus = read_b(is_air, i, j, k + 1) || zplus_solid ? 0 : -A_scale;
+    int A_xplus = read_b(is_air, i + 1, j, k, true) || xplus_solid ? 0 : -A_scale;
+    int A_yplus = read_b(is_air, i, j + 1, k, true) || yplus_solid ? 0 : -A_scale;
+    int A_zplus = read_b(is_air, i, j, k + 1, true) || zplus_solid ? 0 : -A_scale;
 
     write_out(b_mem,       b);
     write_out(A_diag_mem,  A_diag);
@@ -262,10 +287,10 @@ kernel void update_velocities_with_pressure(
 
     // Get pressure gradient
     float3 grad;
-    float center_pressure = read_clamped(pressures, i, j, k);
-    grad.x = read_clamped(pressures, i - 1, j, k) - center_pressure;
-    grad.y = read_clamped(pressures, i, j - 1, k) - center_pressure;
-    grad.z = read_clamped(pressures, i, j, k - 1) - center_pressure;
+    float center_pressure = read_clamped(pressures, i, j, k, 0.0);
+    grad.x = read_clamped(pressures, i - 1, j, k, 0.0) - center_pressure;
+    grad.y = read_clamped(pressures, i, j - 1, k, 0.0) - center_pressure;
+    grad.z = read_clamped(pressures, i, j, k - 1, 0.0) - center_pressure;
 
     // Write incremented velocities to output
     float scale = dt / cell_width / rho;
@@ -282,6 +307,6 @@ kernel void is_air(
     int j = get_global_id(1);
     int k = get_global_id(2);
 
-    float cell_pressure = read_clamped(pressure, i, j, k);
+    float cell_pressure = read_clamped(pressure, i, j, k, 0.0);
     write_out(is_air, cell_pressure > pressure_threshold ? 0 : 1);
 }
