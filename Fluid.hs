@@ -76,7 +76,6 @@ simulateStep state@FluidState{..} = do
 
   -- Update velocities using new pressures
   x <- updateVelocity state' { pressures = pressures' }
-  liftIO $ putStrLn "Finished update"
   return x
 
 advect :: FluidState -> VectorComponent -> OpenCL FluidVector
@@ -150,8 +149,6 @@ conjugateGradient system = do
       if didConverge 
       then return x'
       else do 
-        magnitude <- liftM sqrt (dotProduct r' r')
-        liftIO $ print magnitude
         beta <- liftM2 (/) (dotProduct r' r') (dotProduct r r)
         p' <- addVec r' p beta
         loop r' p' x'
@@ -175,7 +172,7 @@ applyA FluidCellSystem{..} v = do
 converge :: FluidVector -> OpenCL Bool
 converge vec = do
   magnitude <- liftM sqrt (dotProduct vec vec)
-  liftIO $ print magnitude
+  p <- (dotProduct vec vec)
   return $ magnitude < 0.001
 
 zerosWithShapeOf :: FluidVector -> OpenCL FluidVector

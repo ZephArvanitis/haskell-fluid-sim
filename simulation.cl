@@ -13,13 +13,13 @@ static float3 constant grid_shifts[3] = {
 };
 
 // Time step of the simulation
-static float constant dt = 0.01; // seconds
+static float constant dt = 1e-6; // seconds
 
 static float constant cell_width = 1; // arbitrary units (cell units)
 
-static float constant rho = 0.1; // (units ???)
+static float constant rho = 0.5; // (units ???)
 
-static float constant pressure_threshold = 0.1;
+static float constant pressure_threshold = 0.3;
 
 
 /*** Grid location and index conversion functions ***/
@@ -256,10 +256,10 @@ kernel void set_up_system(
     b /= cell_width;
 
     float A_scale = dt / (rho * cell_width * cell_width);
-    int A_diag  = A_scale * (6 - num_solid);
-    int A_xplus = read_b(is_air, i + 1, j, k, true) || xplus_solid ? 0 : -A_scale;
-    int A_yplus = read_b(is_air, i, j + 1, k, true) || yplus_solid ? 0 : -A_scale;
-    int A_zplus = read_b(is_air, i, j, k + 1, true) || zplus_solid ? 0 : -A_scale;
+    float A_diag  = A_scale * (6 - num_solid);
+    float A_xplus = read_b(is_air, i + 1, j, k, true) || xplus_solid ? 0 : -A_scale;
+    float A_yplus = read_b(is_air, i, j + 1, k, true) || yplus_solid ? 0 : -A_scale;
+    float A_zplus = read_b(is_air, i, j, k + 1, true) || zplus_solid ? 0 : -A_scale;
 
     write_out(b_mem,       b);
     write_out(A_diag_mem,  A_diag);

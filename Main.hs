@@ -20,26 +20,26 @@ main = openCL ["cg.cl", "marchingCubes.cl", "simulation.cl"] $ runSimulator $ do
     n = 8
     loop state grid = do
       running <- Simulator.isRunning
-      if not running
-      then return state
-      else do
-        Simulator.waitForNextFrame
-        Simulator.update
+      state' <- if not running
+               then return state
+               else do
+                 Simulator.waitForNextFrame
+                 Simulator.update
 
-        paused <- Simulator.isPaused
-        newState <- if paused
-                    then return state
-                    else do
-                      newState <- lift $ simulateStep state
-                      lift $ populateMarchingCubesGrid grid state
-                      return newState
+                 paused <- Simulator.isPaused
+                 newState <- if paused
+                             then return state
+                             else do
+                               newState <- lift $ simulateStep state
+                               lift $ populateMarchingCubesGrid grid state
+                               return newState
 
-        mesh <- lift $ makeMesh n grid
-        addMesh mesh
-        Simulator.draw
+                 mesh <- lift $ makeMesh n grid
 
-        deleteMesh $ name mesh
+                 addMesh mesh
+                 Simulator.draw
+                 deleteMesh $ name mesh
 
-        -- Run some stuff
-        return newState
-      loop state grid
+                 -- Run some stuff
+                 return newState
+      loop state' grid
